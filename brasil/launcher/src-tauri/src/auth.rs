@@ -167,6 +167,9 @@ impl ApiClient {
 
 pub struct AppState {
     token: Mutex<Option<String>>,
+    /// Conta da sessão corrente. Guardada para o launcher poder usar o nickname
+    /// sem ter que perguntar à API de novo a cada ação.
+    account: Mutex<Option<Account>>,
     api: ApiClient,
 }
 
@@ -174,18 +177,32 @@ impl Default for AppState {
     fn default() -> Self {
         Self {
             token: Mutex::new(None),
+            account: Mutex::new(None),
             api: ApiClient::new(option_env!("KAMBRASIL_API").unwrap_or(DEFAULT_API_BASE)),
         }
     }
 }
 
 impl AppState {
-    fn set_token(&self, token: Option<String>) {
+    fn set_session(&self, token: Option<String>, account: Option<Account>) {
         *self.token.lock().expect("token mutex envenenado") = token;
+        *self.account.lock().expect("account mutex envenenado") = account;
     }
 
     fn token(&self) -> Option<String> {
         self.token.lock().expect("token mutex envenenado").clone()
+    }
+
+    pub fn nickname(&self) -> Option<String> {
+        self.account
+            .lock()
+            .expect("account mutex envenenado")
+            .as_ref()
+            .map(|a| a.nickname.clone())
+    }
+
+    pub fn api_base(&self) -> String {
+        self.api.base().to_string()
     }
 }
 
@@ -229,7 +246,7 @@ pub async fn login(
 ) -> Result<Account, String> {
     let session = state.api.login(&login, &password).await?;
 
-    state.set_token(Some(session.token.clone()));
+    state.set_session(Some(session.token.clone()), Some(session.account.clone()));
     // Se o cofre falhar, o login continua valendo nesta execução — só não
     // sobrevive ao fechar o launcher. Não vale abortar por isso.
     let _ = save_token(&session.token);
@@ -246,7 +263,7 @@ pub async fn restore_session(state: State<'_, AppState>) -> Result<Option<Accoun
 
     match state.api.me(&token).await? {
         Some(account) => {
-            state.set_token(Some(token));
+            state.set_session(Some(token), Some(account.clone()));
             Ok(Some(account))
         }
         None => {
@@ -265,7 +282,7 @@ pub async fn logout(state: State<'_, AppState>) -> Result<(), String> {
         let _ = state.api.logout(&token).await;
     }
 
-    state.set_token(None);
+    state.set_session(None, None);
     clear_stored_token();
     Ok(())
 }
@@ -273,7 +290,7 @@ pub async fn logout(state: State<'_, AppState>) -> Result<(), String> {
 /// Onde a API está apontada. Útil para a UI mostrar quando não é produção.
 #[tauri::command]
 pub fn api_base(state: State<'_, AppState>) -> String {
-    state.api.base().to_string()
+    state.api_base()
 }
 
 #[cfg(test)]

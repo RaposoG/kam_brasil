@@ -27,6 +27,15 @@ const schema = z.object({
   MOTD: z.string().default('Bem-vindo ao Kam Brasil!'),
 
   /**
+   * Necessário para publicar releases do cliente. Vazio desabilita a rota —
+   * é o padrão seguro: sem isso configurado, ninguém publica.
+   */
+  ADMIN_TOKEN: z.string().default(''),
+
+  /** Pasta com os binários das releases, servida em /downloads/. */
+  RELEASES_DIR: z.string().default('./releases'),
+
+  /**
    * Ligue em produção quando a API estiver atrás de nginx/Cloudflare.
    * Sem isso, request.ip devolve o IP do proxy — e o ANNOUNCE_ALLOWED_IPS
    * passaria a comparar sempre contra o mesmo endereço, virando inútil.

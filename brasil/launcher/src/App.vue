@@ -1,6 +1,18 @@
 <script setup lang="ts">
 import { onMounted, ref } from "vue";
-import { type Account, apiBase, login, logout, register, restoreSession } from "./api";
+import {
+  type Account,
+  type UpdateCheck,
+  apiBase,
+  checkUpdate,
+  installUpdate,
+  launchGame,
+  login,
+  logout,
+  onDownloadProgress,
+  register,
+  restoreSession,
+} from "./api";
 
 type Mode = "login" | "register";
 
@@ -14,10 +26,61 @@ const base = ref("");
 
 const form = ref({ login: "", email: "", nickname: "", password: "" });
 
+// --- estado do jogo ---
+const check = ref<UpdateCheck | null>(null);
+const checking = ref(false);
+const downloading = ref(false);
+const progress = ref({ received: 0, total: 0 });
+
+function mb(bytes: number) {
+  return (bytes / 1024 / 1024).toFixed(1);
+}
+
+async function refreshGame() {
+  checking.value = true;
+  error.value = "";
+  try {
+    check.value = await checkUpdate();
+  } catch (e) {
+    error.value = String(e);
+  } finally {
+    checking.value = false;
+  }
+}
+
+async function onInstall() {
+  const release = check.value?.latest;
+  if (!release) return;
+  downloading.value = true;
+  error.value = "";
+  progress.value = { received: 0, total: release.sizeBytes };
+  try {
+    await installUpdate(release);
+    notice.value = `Versão ${release.version} instalada.`;
+    await refreshGame();
+  } catch (e) {
+    error.value = String(e);
+  } finally {
+    downloading.value = false;
+  }
+}
+
+async function onPlay() {
+  error.value = "";
+  try {
+    await launchGame();
+    notice.value = "Bom jogo!";
+  } catch (e) {
+    error.value = String(e);
+  }
+}
+
 onMounted(async () => {
   base.value = await apiBase();
+  onDownloadProgress((p) => (progress.value = p));
   try {
     account.value = await restoreSession();
+    if (account.value) await refreshGame();
   } catch (e) {
     // API fora do ar na abertura nao deve travar o launcher numa tela de erro:
     // cai para o formulario e o usuario tenta quando quiser.
@@ -40,6 +103,7 @@ async function onSubmit() {
   try {
     if (mode.value === "login") {
       account.value = await login(form.value.login, form.value.password);
+      await refreshGame();
     } else {
       await register(form.value.email, form.value.nickname, form.value.password);
       notice.value = "Conta criada! Agora e so entrar.";
@@ -59,6 +123,7 @@ async function onLogout() {
   try {
     await logout();
     account.value = null;
+    check.value = null;
     form.value = { login: "", email: "", nickname: "", password: "" };
   } finally {
     busy.value = false;
@@ -81,12 +146,42 @@ async function onLogout() {
       <p class="welcome">Bem-vindo, <strong>{{ account.nickname }}</strong></p>
       <p class="muted small">{{ account.email }}</p>
 
-      <button class="primary" disabled>Jogar</button>
-      <p class="muted small center">
-        O botão entra em funcionamento junto com a verificação de versão e o download do cliente.
-      </p>
+      <p v-if="checking" class="muted small">Verificando versão…</p>
 
-      <button class="link" :disabled="busy" @click="onLogout">Sair da conta</button>
+      <template v-else-if="downloading">
+        <progress
+          class="bar"
+          :value="progress.received"
+          :max="progress.total || 1"
+        />
+        <p class="muted small center">
+          Baixando… {{ mb(progress.received) }} / {{ mb(progress.total) }} MB
+        </p>
+      </template>
+
+      <template v-else-if="check">
+        <!-- Nada publicado ainda: não faz sentido oferecer download -->
+        <template v-if="!check.latest">
+          <button class="primary" :disabled="!check.status.installed" @click="onPlay">Jogar</button>
+          <p class="muted small center">Nenhuma versão publicada na API ainda.</p>
+        </template>
+
+        <template v-else-if="check.needsUpdate">
+          <button class="primary" @click="onInstall">
+            {{ check.status.installed ? `Atualizar para ${check.latest.version}` : `Instalar ${check.latest.version}` }}
+          </button>
+          <p v-if="check.latest.notes" class="muted small center">{{ check.latest.notes }}</p>
+        </template>
+
+        <template v-else>
+          <button class="primary" @click="onPlay">Jogar</button>
+          <p class="muted small center">
+            Versão {{ check.status.version }} · KaM {{ check.latest.gameRevision }}
+          </p>
+        </template>
+      </template>
+
+      <button class="link" :disabled="busy || downloading" @click="onLogout">Sair da conta</button>
     </section>
 
     <section v-else class="card">
@@ -253,6 +348,22 @@ button.link {
   cursor: pointer;
   text-decoration: underline;
   box-shadow: none;
+}
+
+.bar {
+  width: 100%;
+  height: 8px;
+  appearance: none;
+  border: none;
+  border-radius: 4px;
+  overflow: hidden;
+  background: rgba(128, 128, 128, 0.25);
+}
+.bar::-webkit-progress-bar {
+  background: rgba(128, 128, 128, 0.25);
+}
+.bar::-webkit-progress-value {
+  background: #2f6fed;
 }
 
 .welcome {

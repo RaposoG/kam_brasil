@@ -1,10 +1,14 @@
+import { mkdir } from 'node:fs/promises'
+import { resolve } from 'node:path'
 import Fastify from 'fastify'
 import cors from '@fastify/cors'
+import fastifyStatic from '@fastify/static'
 import { config } from './config.ts'
 import { dataSource } from './data-source.ts'
 import authPlugin from './plugins/auth.ts'
 import authRoutes from './routes/auth.ts'
 import masterRoutes from './routes/master.ts'
+import clientRoutes from './routes/client.ts'
 
 const app = Fastify({
   trustProxy: config.TRUST_PROXY,
@@ -21,9 +25,17 @@ app.addContentTypeParser('*', { parseAs: 'buffer' }, (_request, body, done) => {
 })
 
 await app.register(cors, { origin: true })
+
+// Binários das releases. Em produção o ideal é deixar o nginx servir isso
+// direto — mas ter a API servindo mantém o ambiente local autossuficiente.
+const releasesDir = resolve(config.RELEASES_DIR)
+await mkdir(releasesDir, { recursive: true })
+await app.register(fastifyStatic, { root: releasesDir, prefix: '/downloads/' })
+
 await app.register(authPlugin)
 await app.register(authRoutes)
 await app.register(masterRoutes)
+await app.register(clientRoutes)
 
 app.get('/health', async () => {
   // Confirma que a API está de pé E que ela enxerga o banco — teste de fumaça

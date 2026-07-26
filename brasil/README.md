@@ -93,6 +93,31 @@ Regras aplicadas:
 - O JWT carrega o id da sessão em `jti`. Toda requisição autenticada confere a
   sessão no banco — sem isso, logout não teria efeito até o token expirar.
 
+### Endpoints de release do cliente
+
+| Método | Rota | O que faz |
+|---|---|---|
+| `GET` | `/client/latest` | versão que os jogadores devem estar rodando. 404 se nada publicado |
+| `GET` | `/client/releases` | histórico das 20 últimas |
+| `POST` | `/client/releases` | publica. Exige header `x-admin-token` |
+| `GET` | `/downloads/<arquivo>` | serve o binário |
+
+Para publicar: coloque o executável em `api/releases/` e chame
+
+```bash
+curl -X POST http://localhost:3000/client/releases \
+  -H "x-admin-token: $ADMIN_TOKEN" -H 'content-type: application/json' \
+  -d '{"version":"1.0.0","gameRevision":"r16155","fileName":"KaM_Brasil_1.0.0.exe"}'
+```
+
+A API calcula o **sha256 e o tamanho lendo o arquivo em disco**, em vez de
+confiar no que foi enviado — assim o hash sempre corresponde ao que os clientes
+vão de fato baixar. Releases são imutáveis: republicar a mesma versão dá 409,
+porque isso invalidaria o hash que alguém já baixou.
+
+Sem `ADMIN_TOKEN` no `.env`, a rota de publicação responde 503. É o padrão
+seguro: ninguém publica por acidente.
+
 ### Endpoints do master server
 
 Estas rotas existem para o **cliente do jogo**, que monta as URLs em
