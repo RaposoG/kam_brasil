@@ -9,6 +9,7 @@ import authPlugin from './plugins/auth.ts'
 import authRoutes from './routes/auth.ts'
 import masterRoutes from './routes/master.ts'
 import clientRoutes from './routes/client.ts'
+import verifyRoutes from './routes/verify.ts'
 
 const app = Fastify({
   trustProxy: config.TRUST_PROXY,
@@ -36,6 +37,7 @@ await app.register(authPlugin)
 await app.register(authRoutes)
 await app.register(masterRoutes)
 await app.register(clientRoutes)
+await app.register(verifyRoutes)
 
 app.get('/health', async () => {
   // Confirma que a API está de pé E que ela enxerga o banco — teste de fumaça

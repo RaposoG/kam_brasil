@@ -36,6 +36,15 @@ const schema = z.object({
   RELEASES_DIR: z.string().default('./releases'),
 
   /**
+   * IPs autorizados a verificar tokens (`GET /auth/verify`), separados por vírgula.
+   *
+   * Quem consome essa rota é o servidor de jogo, que roda ao lado da API. O
+   * token trafega em claro na query — limitação do cliente HTTP do Pascal — então
+   * o padrão é loopback e alterar isso exige saber o que está fazendo.
+   */
+  VERIFY_ALLOWED_IPS: z.string().default('127.0.0.1'),
+
+  /**
    * Ligue em produção quando a API estiver atrás de nginx/Cloudflare.
    * Sem isso, request.ip devolve o IP do proxy — e o ANNOUNCE_ALLOWED_IPS
    * passaria a comparar sempre contra o mesmo endereço, virando inútil.
@@ -57,6 +66,9 @@ export const config = {
   ...parsed.data,
   isDev: parsed.data.NODE_ENV === 'development',
   announceAllowedIps: parsed.data.ANNOUNCE_ALLOWED_IPS.split(',')
+    .map((ip) => ip.trim())
+    .filter(Boolean),
+  verifyAllowedIps: parsed.data.VERIFY_ALLOWED_IPS.split(',')
     .map((ip) => ip.trim())
     .filter(Boolean),
 }
