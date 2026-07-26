@@ -40,7 +40,7 @@
 {$IFDEF WDC}
   {$IFNDEF WDC64} // Not available on Win64
     // Project can be compiled without madExcept features (if you dont have madExcept installed)
-    {$DEFINE USE_MAD_EXCEPT}
+    {.$DEFINE USE_MAD_EXCEPT}
     // Delphi compiler video play
     {$DEFINE VIDEOS}
     
@@ -71,7 +71,7 @@
 {$ENDIF}
 
 // Allows to skip secure authentication unit (KM_NetAuthSecure) if you dont have it
-{.$DEFINE DBG_SKIP_SECURE_AUTH}
+{$DEFINE DBG_SKIP_SECURE_AUTH}
 
 // Enable perflog (should be disabled for release / release candidate versions)
 {$DEFINE DBG_PERFLOG}

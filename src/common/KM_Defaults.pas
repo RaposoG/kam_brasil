@@ -293,7 +293,13 @@ var
   DEBUG_CHEATS            :Boolean = DEBUG_CFG; //Cheats for debug (place scout and reveal map) which can be turned On from menu
   MULTIPLAYER_SPEEDUP     :Boolean = DEBUG_CFG; //Allow you to use F8 to speed up multiplayer for debugging (only effects local client)
   SKIP_EXE_CRC            :Boolean = False; //Don't check KaM_Remake.exe CRC before MP game (useful for testing with different versions)
-  ALLOW_MP_MODS           :Boolean = DEBUG_CFG; //Don't let people enter MP mode if they are using mods (unit.dat, house.dat, etc.)
+  // kam_brasil: was DEBUG_CFG. Forced True so MP is reachable with our data files.
+  // Our houses.dat/unit.dat come from a TPR edition whose Adler32 does not match the
+  // official DEFINES_CRC ($28810991) checked in TKMGameApp.CheckDATConsistency.
+  // Consequence: games against clients with the official .dat WILL desync. Only play MP
+  // between builds sharing these exact data files. Revert to DEBUG_CFG once the official
+  // houses.dat/unit.dat are in place. See Docs/kam_brasil-local-changes.md
+  ALLOW_MP_MODS           :Boolean = True; //Don't let people enter MP mode if they are using mods (unit.dat, house.dat, etc.)
   ALLOW_TAKE_AI_PLAYERS   :Boolean = False; //Allow to load SP maps without Human player (usefull for AI testing)
   {Data output}
   BLOCK_SAVE              :Boolean = False; //Block saving game (used in parallel Runner)
