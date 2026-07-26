@@ -136,7 +136,12 @@ type
     mkFileProgress,    //Joiner informs other players about his map/save downloading progress
 
     mkVote,            //Joiner tells host his vote
-    mkAskToSendCrashreport // Ask other player to send crashreport, because we got desync error with him
+    mkAskToSendCrashreport, // Ask other player to send crashreport, because we got desync error with him
+
+    // kam_brasil: Client sends its Kam Brasil session token right after connecting.
+    // The server validates it against our API and only then lets the client join a
+    // room. Ignored entirely when the server has RequireAuth turned off.
+    mkAuthToken
   );
   // ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
   // ^^^ Add new network command types to the end of the list. Check explanation above ^^^
@@ -211,7 +216,8 @@ const
     pfNoData,   //mkFileEnd
     pfBinary,   //mkFileProgress
     pfNoData,   //mkVote
-    pfStringW   //mkAskToSendCrashreport
+    pfStringW,  //mkAskToSendCrashreport
+    pfStringA   //mkAuthToken -- kam_brasil: o token e um JWT, ASCII puro
   );
 
 

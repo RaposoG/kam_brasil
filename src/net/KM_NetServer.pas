@@ -60,6 +60,10 @@ type
     fQueuedPacketsCnt: Byte;
     fQueuedPacketsSize: Cardinal;
     fQueuedPackets: array of Byte;
+
+    // kam_brasil: nickname confirmado pela nossa API. Vazio = ainda nao
+    // autenticado. So e consultado quando RequireAuth esta ligado.
+    fAuthNickname: AnsiString;
   public
     constructor Create(aHandle: TKMNetHandleIndex; aRoom: Integer);
     procedure AddQueuedPacket(aData: Pointer; aLength: Cardinal);
@@ -68,6 +72,7 @@ type
     property Room: Integer read fRoom write fRoom;
     property Ping: Word read fPing write fPing;
     property FPS: Word read fFPS write fFPS;
+    property AuthNickname: AnsiString read fAuthNickname write fAuthNickname;
   end;
 
 
