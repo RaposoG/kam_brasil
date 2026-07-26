@@ -27,20 +27,16 @@ Contas serão **públicas e gratuitas**: qualquer pessoa cria, com email e nickn
 
 ## 📁 Como este repositório está organizado
 
-```
-kam_brasil/
-├── src/  data/  Utils/  bat/  Installer/  ...   ← o jogo (Delphi/Object Pascal)
-└── brasil/                                      ← tudo que é nosso
-    ├── api/          Fastify + TypeORM + PostgreSQL
-    ├── launcher/     Tauri + Vue
-    └── docker-compose.yml
-```
+Este repositório contém **apenas o jogo** — o fork do KaM Remake em Delphi/Object Pascal.
 
-A separação é proposital. Todo código novo vive em [`brasil/`](brasil/), uma pasta que o
-upstream nunca vai criar — assim `git pull` do `reyandme/kam_remake` nunca conflita com o
-que a gente escreveu. As poucas alterações inevitáveis dentro do jogo estão catalogadas em
-**[Docs/kam_brasil-local-changes.md](Docs/kam_brasil-local-changes.md)**; mantenha esse
-arquivo atualizado, ele é o que evita surpresa em merge.
+A plataforma online (API de contas e launcher) vive em repositório próprio e privado,
+`RaposoG/kam-brasil-api`. Ela não depende de uma linha do código do jogo, e separá-la
+deixa o deploy dela rápido em vez de arrastar 1.700 arquivos de Pascal a cada push.
+
+As alterações que este fork faz no jogo estão catalogadas em
+**[Docs/kam_brasil-local-changes.md](Docs/kam_brasil-local-changes.md)** — a maioria em
+arquivos novos, justamente para que `git pull` do `reyandme/kam_remake` não conflite.
+Mantenha esse arquivo atualizado; ele é o que evita surpresa em merge.
 
 ---
 
@@ -61,9 +57,9 @@ Para gerar os sprites a partir do KaM original, veja
 > Delphi 10.3+) que o Free Pascal não suporta em versão nenhuma. O **servidor dedicado**,
 > por outro lado, compila com FPC normalmente — é o que permite buildá-lo em CI para Linux.
 
-## 🖥️ Rodando a API e o launcher
+## 🖥️ API e launcher
 
-Veja **[brasil/README.md](brasil/README.md)**.
+Ficam no repositório privado `RaposoG/kam-brasil-api`, com instruções próprias.
 
 ---
 
