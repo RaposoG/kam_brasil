@@ -141,6 +141,69 @@ sem depender da IDE do Delphi.
 
 ---
 
+## 5. Autenticação de contas no multiplayer (Fase 1b)
+
+Conjunto de mudanças que faz o servidor dedicado exigir conta do Kam Brasil.
+**Desligado por padrão** (`KamBrasilRequireAuth=0`): um servidor exigindo token
+antes de os clientes saberem enviá-lo deixaria a comunidade sem jogar.
+
+### Arquivos tocados
+
+| Arquivo | O quê |
+|---|---|
+| `src/net/KM_KamBrasilAuth.pas` | **novo** — lê o token entregue pelo launcher |
+| `src/net/KM_NetTypes.pas` | `mkAuthToken`, `mkAuthNickname` + entradas em `NetPacketType` |
+| `src/net/KM_NetConsts.pas` | `mkAuthNickname` na whitelist de `lgsConnecting` e `lgsReconnecting` |
+| `src/net/KM_NetServer.pas` | fila de validação, recusa no join, imposição de nickname |
+| `src/net/KM_Networking.pas` | envia o token, adota o nickname do servidor |
+| `src/settings/KM_ServerSettings.pas` | `KamBrasilRequireAuth`, `KamBrasilAuthVerifyUrl` |
+| `src/gui/pages_menu/KM_GUIMenuMultiplayer.pas` | campo de nickname vira `ReadOnly` |
+| `KM_TextIDs.inc` + `.libx` | textos 1605 e 1606 |
+
+### Como funciona
+
+```
+launcher → arquivo temporário + KAMBRASIL_TOKEN_FILE
+         → jogo lê uma vez e apaga
+         → mkAuthToken ao conectar
+         → servidor: GET /auth/verify → "ok <nickname>"
+         → mkAuthNickname de volta, ANTES da resposta do join
+         → join liberado
+```
+
+### Armadilhas que custaram depuração
+
+**Adicionar um `TKMNetMessageKind` exige três lugares.** O enum e o array
+`NetPacketType` o compilador cobra. A whitelist `NET_ALLOWED_PACKETS_SET` ele
+**não** cobra — o pacote é descartado em silêncio, em runtime.
+
+**Recusar durante o join precisa ser `mkRefuseToJoin`, não `mkKicked`.** O
+handler de `mkKicked` chama `OnDisconnect`, que só é atribuído depois de entrar
+no lobby — antes disso é ponteiro nulo e o cliente estoura com access violation.
+
+**A validação é assíncrona; o join chega antes.** O cliente manda `mkAuthToken`
+e `mkJoinRoom` em sequência, e a resposta HTTP demora. O pedido de sala fica
+guardado e é atendido quando a API responde.
+
+**Fila, não paralelismo.** `TKMHTTPClient` atende uma requisição por vez — o
+wrapper chama `Abort` a cada `GetURL` novo.
+
+### Limitação conhecida
+
+A verificação de `mkAskToJoin` cobre quem **entra** numa sala, não quem a
+**cria**: o host se adiciona localmente sem enviar esse pacote. Para o cliente
+oficial isso está resolvido (ele adota o nickname que o servidor manda), mas um
+**cliente modificado que hospede** ainda pode usar qualquer nome. Fechar isso
+exige validar o `mkPlayersList` difundido pelo host.
+
+### Dependência frágil
+
+O parsing do `mkAskToJoin` assume que a solução do challenge é vazia, o que só
+vale porque compilamos com `DBG_SKIP_SECURE_AUTH`. Com `KM_NetAuthSecure` esse
+trecho precisa ser revisto — está comentado no local.
+
+---
+
 ## Arquivos copiados para dentro do repo (não versionados)
 
 Tudo abaixo é coberto pelo `.gitignore`, então a working tree permanece limpa:
