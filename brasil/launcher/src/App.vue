@@ -1,51 +1,286 @@
 <script setup lang="ts">
-import { ref } from "vue";
-import { invoke } from "@tauri-apps/api/core";
+import { onMounted, ref } from "vue";
+import { type Account, apiBase, login, logout, register, restoreSession } from "./api";
 
-const greetMsg = ref("");
-const name = ref("");
+type Mode = "login" | "register";
 
-async function greet() {
-  // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
-  greetMsg.value = await invoke("greet", { name: name.value });
+const account = ref<Account | null>(null);
+const mode = ref<Mode>("login");
+const busy = ref(false);
+const booting = ref(true);
+const error = ref("");
+const notice = ref("");
+const base = ref("");
+
+const form = ref({ login: "", email: "", nickname: "", password: "" });
+
+onMounted(async () => {
+  base.value = await apiBase();
+  try {
+    account.value = await restoreSession();
+  } catch (e) {
+    // API fora do ar na abertura nao deve travar o launcher numa tela de erro:
+    // cai para o formulario e o usuario tenta quando quiser.
+    error.value = String(e);
+  } finally {
+    booting.value = false;
+  }
+});
+
+function switchMode(to: Mode) {
+  mode.value = to;
+  error.value = "";
+  notice.value = "";
+}
+
+async function onSubmit() {
+  error.value = "";
+  notice.value = "";
+  busy.value = true;
+  try {
+    if (mode.value === "login") {
+      account.value = await login(form.value.login, form.value.password);
+    } else {
+      await register(form.value.email, form.value.nickname, form.value.password);
+      notice.value = "Conta criada! Agora e so entrar.";
+      form.value.login = form.value.nickname;
+      mode.value = "login";
+    }
+    form.value.password = "";
+  } catch (e) {
+    error.value = String(e);
+  } finally {
+    busy.value = false;
+  }
+}
+
+async function onLogout() {
+  busy.value = true;
+  try {
+    await logout();
+    account.value = null;
+    form.value = { login: "", email: "", nickname: "", password: "" };
+  } finally {
+    busy.value = false;
+  }
 }
 </script>
 
 <template>
-  <main class="container">
-    <h1>Welcome to Tauri + Vue</h1>
+  <main class="app">
+    <header class="brand">
+      <h1>Kam Brasil</h1>
+      <p v-if="base.includes('localhost')" class="dev">API local · {{ base }}</p>
+    </header>
 
-    <div class="row">
-      <a href="https://vite.dev" target="_blank">
-        <img src="/vite.svg" class="logo vite" alt="Vite logo" />
-      </a>
-      <a href="https://tauri.app" target="_blank">
-        <img src="/tauri.svg" class="logo tauri" alt="Tauri logo" />
-      </a>
-      <a href="https://vuejs.org/" target="_blank">
-        <img src="./assets/vue.svg" class="logo vue" alt="Vue logo" />
-      </a>
-    </div>
-    <p>Click on the Tauri, Vite, and Vue logos to learn more.</p>
+    <section v-if="booting" class="card center">
+      <p class="muted">Restaurando sessão…</p>
+    </section>
 
-    <form class="row" @submit.prevent="greet">
-      <input id="greet-input" v-model="name" placeholder="Enter a name..." />
-      <button type="submit">Greet</button>
-    </form>
-    <p>{{ greetMsg }}</p>
+    <section v-else-if="account" class="card">
+      <p class="welcome">Bem-vindo, <strong>{{ account.nickname }}</strong></p>
+      <p class="muted small">{{ account.email }}</p>
+
+      <button class="primary" disabled>Jogar</button>
+      <p class="muted small center">
+        O botão entra em funcionamento junto com a verificação de versão e o download do cliente.
+      </p>
+
+      <button class="link" :disabled="busy" @click="onLogout">Sair da conta</button>
+    </section>
+
+    <section v-else class="card">
+      <nav class="tabs">
+        <button :class="{ active: mode === 'login' }" @click="switchMode('login')">Entrar</button>
+        <button :class="{ active: mode === 'register' }" @click="switchMode('register')">Criar conta</button>
+      </nav>
+
+      <form @submit.prevent="onSubmit">
+        <label v-if="mode === 'login'">
+          Email ou nickname
+          <input v-model="form.login" required autocomplete="username" />
+        </label>
+
+        <template v-else>
+          <label>
+            Email
+            <input v-model="form.email" type="email" required autocomplete="email" />
+          </label>
+          <label>
+            Nickname
+            <input
+              v-model="form.nickname"
+              required
+              minlength="3"
+              maxlength="16"
+              pattern="[A-Za-z0-9_\-]+"
+              title="3 a 16 caracteres: letras, números, _ e -"
+              autocomplete="nickname"
+            />
+          </label>
+        </template>
+
+        <label>
+          Senha
+          <input
+            v-model="form.password"
+            type="password"
+            required
+            minlength="8"
+            :autocomplete="mode === 'login' ? 'current-password' : 'new-password'"
+          />
+        </label>
+
+        <p v-if="error" class="error">{{ error }}</p>
+        <p v-if="notice" class="notice">{{ notice }}</p>
+
+        <button class="primary" type="submit" :disabled="busy">
+          {{ busy ? "Aguarde…" : mode === "login" ? "Entrar" : "Criar conta" }}
+        </button>
+      </form>
+    </section>
   </main>
 </template>
 
 <style scoped>
-.logo.vite:hover {
-  filter: drop-shadow(0 0 2em #747bff);
+.app {
+  /* box-sizing global (abaixo) evita que o padding some ao 100vh e crie rolagem */
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1.5rem;
+  padding: 2rem;
 }
 
-.logo.vue:hover {
-  filter: drop-shadow(0 0 2em #249b73);
+.brand {
+  text-align: center;
+}
+.brand h1 {
+  margin: 0;
+  font-size: 2.2rem;
+  letter-spacing: 0.02em;
+}
+.dev {
+  margin: 0.35rem 0 0;
+  font-size: 0.75rem;
+  opacity: 0.55;
 }
 
+.card {
+  width: 100%;
+  max-width: 360px;
+  display: flex;
+  flex-direction: column;
+  gap: 0.9rem;
+  padding: 1.5rem;
+  border: 1px solid rgba(128, 128, 128, 0.25);
+  border-radius: 10px;
+}
+.card.center {
+  align-items: center;
+}
+
+.tabs {
+  display: flex;
+  gap: 0.5rem;
+}
+.tabs button {
+  flex: 1;
+  padding: 0.5rem;
+  background: transparent;
+  border: 1px solid rgba(128, 128, 128, 0.3);
+  border-radius: 6px;
+  cursor: pointer;
+  font: inherit;
+  color: inherit;
+  opacity: 0.6;
+  box-shadow: none;
+}
+.tabs button.active {
+  opacity: 1;
+  border-color: currentColor;
+}
+
+form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.8rem;
+}
+label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  font-size: 0.85rem;
+}
+input {
+  padding: 0.55rem 0.7rem;
+  border: 1px solid rgba(128, 128, 128, 0.35);
+  border-radius: 6px;
+  font: inherit;
+  color: inherit;
+  background: transparent;
+  box-shadow: none;
+}
+input:focus {
+  outline: 2px solid rgba(120, 160, 255, 0.5);
+  outline-offset: 1px;
+}
+
+button.primary {
+  padding: 0.6rem;
+  border: none;
+  border-radius: 6px;
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+  background: #2f6fed;
+  color: #fff;
+  box-shadow: none;
+}
+button.primary:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+button.link {
+  background: none;
+  border: none;
+  font: inherit;
+  color: inherit;
+  opacity: 0.6;
+  cursor: pointer;
+  text-decoration: underline;
+  box-shadow: none;
+}
+
+.welcome {
+  margin: 0;
+  font-size: 1.1rem;
+}
+.muted {
+  opacity: 0.6;
+  margin: 0;
+}
+.small {
+  font-size: 0.78rem;
+}
+.center {
+  text-align: center;
+}
+.error {
+  margin: 0;
+  color: #e06c6c;
+  font-size: 0.85rem;
+}
+.notice {
+  margin: 0;
+  color: #57b877;
+  font-size: 0.85rem;
+}
 </style>
+
 <style>
 :root {
   font-family: Inter, Avenir, Helvetica, Arial, sans-serif;
@@ -60,101 +295,23 @@ async function greet() {
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
-  -webkit-text-size-adjust: 100%;
 }
 
-.container {
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+body {
   margin: 0;
-  padding-top: 10vh;
-  display: flex;
-  flex-direction: column;
-  justify-content: center;
-  text-align: center;
-}
-
-.logo {
-  height: 6em;
-  padding: 1.5em;
-  will-change: filter;
-  transition: 0.75s;
-}
-
-.logo.tauri:hover {
-  filter: drop-shadow(0 0 2em #24c8db);
-}
-
-.row {
-  display: flex;
-  justify-content: center;
-}
-
-a {
-  font-weight: 500;
-  color: #646cff;
-  text-decoration: inherit;
-}
-
-a:hover {
-  color: #535bf2;
-}
-
-h1 {
-  text-align: center;
-}
-
-input,
-button {
-  border-radius: 8px;
-  border: 1px solid transparent;
-  padding: 0.6em 1.2em;
-  font-size: 1em;
-  font-weight: 500;
-  font-family: inherit;
-  color: #0f0f0f;
-  background-color: #ffffff;
-  transition: border-color 0.25s;
-  box-shadow: 0 2px 2px rgba(0, 0, 0, 0.2);
-}
-
-button {
-  cursor: pointer;
-}
-
-button:hover {
-  border-color: #396cd8;
-}
-button:active {
-  border-color: #396cd8;
-  background-color: #e8e8e8;
-}
-
-input,
-button {
-  outline: none;
-}
-
-#greet-input {
-  margin-right: 5px;
+  overflow: hidden;
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
     color: #f6f6f6;
-    background-color: #2f2f2f;
-  }
-
-  a:hover {
-    color: #24c8db;
-  }
-
-  input,
-  button {
-    color: #ffffff;
-    background-color: #0f0f0f98;
-  }
-  button:active {
-    background-color: #0f0f0f69;
+    background-color: #232323;
   }
 }
-
 </style>
