@@ -1,23 +1,72 @@
+# Sobe a plataforma inteira: API + Postgres.
+#
+# O banco NAO e exposto para fora. A API fala com ele pelo nome do servico, na
+# rede interna do compose -- por isso nao ha nada de Postgres para voce
+# configurar. Quem precisar inspecionar usa:
+#
+#   docker compose exec postgres psql -U kambrasil -d kambrasil
+#
+# Em producao, preencha .env com JWT_SECRET, ADMIN_TOKEN e POSTGRES_PASSWORD.
+
 services:
   postgres:
     image: postgres:18
     container_name: kambrasil-postgres
     restart: unless-stopped
     environment:
-      POSTGRES_USER: ${POSTGRES_USER:-kambrasil}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?defina POSTGRES_PASSWORD no .env}
-      POSTGRES_DB: ${POSTGRES_DB:-kambrasil}
-    ports:
-      - "${POSTGRES_PORT:-5434}:5432"
+      POSTGRES_USER: kambrasil
+      # Default so serve porque o banco nao tem porta publicada: e alcancavel
+      # apenas de dentro da rede do compose. Em producao, defina no .env.
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-kambrasil-interno}
+      POSTGRES_DB: kambrasil
     volumes:
       # PG18 mudou o VOLUME de /var/lib/postgresql/data para /var/lib/postgresql
       # (o PGDATA real vive em 18/docker). Montar no caminho antigo NAO persiste.
       - postgres-data:/var/lib/postgresql
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-kambrasil} -d ${POSTGRES_DB:-kambrasil}"]
-      interval: 10s
+      test: ["CMD-SHELL", "pg_isready -U kambrasil -d kambrasil"]
+      interval: 5s
       timeout: 5s
-      retries: 5
+      retries: 10
+
+  api:
+    build: ./api
+    container_name: kambrasil-api
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        # Espera o banco aceitar conexao. Sem isto a API sobe primeiro, falha na
+        # migration e reinicia em loop ate dar sorte.
+        condition: service_healthy
+    environment:
+      # "postgres" e o nome do servico: resolvido pelo DNS interno do compose.
+      DATABASE_URL: postgres://kambrasil:${POSTGRES_PASSWORD:-kambrasil-interno}@postgres:5432/kambrasil
+      NODE_ENV: production
+      API_PORT: 3000
+      API_HOST: 0.0.0.0
+      JWT_SECRET: ${JWT_SECRET:?defina JWT_SECRET no .env (openssl rand -hex 32)}
+      SESSION_TTL_DAYS: ${SESSION_TTL_DAYS:-30}
+      PLAY_TICKET_TTL_MINUTES: ${PLAY_TICKET_TTL_MINUTES:-720}
+      ADMIN_TOKEN: ${ADMIN_TOKEN:-}
+      MOTD: ${MOTD:-Bem-vindo ao Kam Brasil!}
+      # Atras de nginx/Cloudflare tem que ser true, senao request.ip devolve o IP
+      # do proxy e os allowlists abaixo viram enfeite.
+      TRUST_PROXY: ${TRUST_PROXY:-true}
+      ANNOUNCE_ALLOWED_IPS: ${ANNOUNCE_ALLOWED_IPS:-}
+      VERIFY_ALLOWED_IPS: ${VERIFY_ALLOWED_IPS:-127.0.0.1}
+    ports:
+      - "${API_PORT:-3000}:3000"
+    volumes:
+      # Releases sao centenas de MB e vivem em disco, nao no banco. Sem volume,
+      # cada rebuild apagaria tudo.
+      - releases:/app/releases
+    healthcheck:
+      test: ["CMD-SHELL", "bun -e \"fetch('http://127.0.0.1:3000/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\""]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
 
 volumes:
   postgres-data:
+  releases:
