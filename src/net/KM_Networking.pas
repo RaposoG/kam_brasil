@@ -9,6 +9,7 @@ uses
   KM_CommonClasses, KM_CommonTypes, KM_NetGameInfo, KM_NetTypes, KM_Defaults, KM_Points,
   KM_Saves, KM_GameOptions, KM_ResLocales, KM_NetFileTransfer, KM_Maps, KM_MapTypes, KM_NetRoom,
   KM_NetDedicatedServer, KM_NetClient, KM_NetServerPoller,
+  KM_KamBrasilAuth, // kam_brasil: token de sessao entregue pelo launcher
   {$IFDEF DBG_SKIP_SECURE_AUTH}
     KM_NetAuthUnsecure
   {$ELSE}
@@ -1688,6 +1689,12 @@ begin
               aStream.Read(tmpHandleIndex);
               fMyIndexOnServer := tmpHandleIndex;
               //PostLocalMessage('Index on Server - ' + inttostr(fMyIndexOnServer));
+
+              // kam_brasil: manda o token ANTES de pedir a sala, para o servidor
+              // ja ter o que validar quando o mkJoinRoom chegar. Servidores com
+              // auth desligada ignoram este pacote.
+              if KamBrasilSessionToken <> '' then
+                PacketSendA(NET_ADDRESS_SERVER, mkAuthToken, KamBrasilSessionToken);
 
               // Now we can try to join the room we planned to
               M2 := TKMemoryStreamBinary.Create;

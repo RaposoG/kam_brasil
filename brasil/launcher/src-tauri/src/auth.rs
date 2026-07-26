@@ -189,7 +189,9 @@ impl AppState {
         *self.account.lock().expect("account mutex envenenado") = account;
     }
 
-    fn token(&self) -> Option<String> {
+    /// Visível ao módulo `game` para a entrega do token ao jogo. Nunca sai por
+    /// comando Tauri — a webview não deve ver o token.
+    pub(crate) fn token(&self) -> Option<String> {
         self.token.lock().expect("token mutex envenenado").clone()
     }
 
