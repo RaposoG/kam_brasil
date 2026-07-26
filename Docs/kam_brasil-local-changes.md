@@ -93,6 +93,54 @@ Não exige recompilar nada além dessa reversão.
 
 ---
 
+## 4. `KaM_Remake.inc` — `DBG_RNG_SPY` virou condicional
+
+```diff
+-{$DEFINE DBG_RNG_SPY}
++{$IFNDEF NO_RNG_SPY}
++  {$DEFINE DBG_RNG_SPY}
++{$ENDIF}
+```
+
+**Por quê:** o servidor dedicado não compilava com FPC. A cadeia é indireta:
+
+```
+KaM_DedicatedServer.dpr
+  └─ KM_CommonUtils          {$IFDEF DBG_RNG_SPY} KM_RandomChecks
+       └─ KM_RandomChecks    usa KM_GameSettings
+            └─ KM_GameSettings  48 inline vars → FPC não compila
+```
+
+Como `DBG_RNG_SPY` estava ligado incondicionalmente, o servidor arrastava o
+módulo de configuração do cliente inteiro. **Isto é um bug do upstream**: o
+build dos servidores Linux (`bat/build_linux_servers.bat`, que usa `lazbuild`)
+está quebrado no master atual pelo mesmo motivo.
+
+O padrão `{$IFNDEF NO_...}` já é usado no mesmo arquivo para `LOAD_GAME_RES_ASYNC`,
+então isso segue o idioma da casa. **O comportamento padrão não muda** — sem
+`-dNO_RNG_SPY`, `DBG_RNG_SPY` continua definido exatamente como antes.
+
+Bom candidato a PR para o upstream: conserta o build deles sem alterar default.
+
+### Compilando o servidor dedicado com FPC
+
+Não precisa de Delphi. Com o Lazarus instalado:
+
+```
+fpc -Mdelphi -O2 -dNO_RNG_SPY -Fi<repo> \
+    -Fu<todos os subdiretorios de src, exceto unused/Samples/Virtual-TreeView/Overbyte> \
+    -FuC:\lazarus\lcl\units\x86_64-win64 \
+    -FuC:\lazarus\lcl\units\x86_64-win64\nogui \
+    -FuC:\lazarus\components\lazutils\lib\x86_64-win64 \
+    Utils\DedicatedServer\KaM_DedicatedServer.dpr
+```
+
+O widgetset `nogui` é o correto aqui: o `.dpr` puxa `Interfaces` da LCL mesmo
+sendo aplicação console. É isso que abre caminho para buildar o servidor em CI,
+sem depender da IDE do Delphi.
+
+---
+
 ## Arquivos copiados para dentro do repo (não versionados)
 
 Tudo abaixo é coberto pelo `.gitignore`, então a working tree permanece limpa:

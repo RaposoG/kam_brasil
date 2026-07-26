@@ -81,7 +81,12 @@
   {$DEFINE LOAD_GAME_RES_ASYNC}
 {$ENDIF}
 
-{$DEFINE DBG_RNG_SPY}
+// Permite desligar via -dNO_RNG_SPY. Necessario para o servidor dedicado com FPC:
+// KM_CommonUtils puxa KM_RandomChecks sob este define, e KM_RandomChecks usa
+// KM_GameSettings, que tem inline vars (Delphi 10.3+) que o FPC nao compila.
+{$IFNDEF NO_RNG_SPY}
+  {$DEFINE DBG_RNG_SPY}
+{$ENDIF}
 
 // Enable some debug features
 {.$DEFINE DEBUG}
