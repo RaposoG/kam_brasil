@@ -1704,6 +1704,23 @@ begin
               M2.Free;
             end;
 
+    // kam_brasil: o servidor manda o nickname que a conta possui. Adotamos sem
+    // discutir -- e o servidor quem decide identidade, nao a configuracao local.
+    //
+    // Chega antes da resposta do join, entao vale tanto para quem entra numa
+    // sala quanto para quem recebe direitos de host (que se adiciona sozinho e
+    // por isso escapava da verificacao feita no servidor).
+    mkAuthNickname:
+            begin
+              aStream.ReadA(tmpStringA);
+              if tmpStringA <> '' then
+              begin
+                fMyNickname := tmpStringA;
+                // Persiste para a proxima sessao ja abrir com o nome certo.
+                gGameSettings.MultiplayerName := tmpStringA;
+              end;
+            end;
+
     mkConnectedToRoom:
             begin
               aStream.Read(tmpHandleIndex); //Host's index

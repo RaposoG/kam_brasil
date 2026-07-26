@@ -220,6 +220,10 @@ begin
       Edit_MP_PlayerName := TKMEdit.Create(Panel_MPPlayerName, 8, 30, 140, 20, fntGrey);
       Edit_MP_PlayerName.MaxLen := MP_NICKNAME_LENGTH_MAX;
       Edit_MP_PlayerName.AllowedChars := acANSI7;
+      // kam_brasil: o nome vem da conta, nao da digitacao. Mantido visivel em
+      // vez de removido para o jogador continuar vendo com quem esta logado.
+      // ReadOnly bloqueia teclado, mouse e hit-test (ver KM_ControlsEdit).
+      Edit_MP_PlayerName.ReadOnly := True;
       TKMLabel.Create(Panel_MPPlayerName, 8, 60, 304, 20, gResTexts[TX_MP_MENU_STATUS], fntOutline, taLeft);
       Label_MP_Status := TKMLabel.Create(Panel_MPPlayerName, 8, 80, 304, 36, '', fntGrey, taLeft);
       Label_MP_Status.WordWrap := True;

@@ -536,6 +536,12 @@ begin
       client.AuthNickname := AnsiString(Trim(Copy(response, 4, Length(response))));
       Status('Client ' + IntToStr(handle) + ' authenticated as ' + string(client.AuthNickname));
 
+      // Informa ao cliente qual nome a conta dele possui. Vai ANTES da resposta
+      // do join: assim, quando ele entrar na sala -- inclusive recebendo
+      // direitos de host, caso em que se adiciona sozinho -- ja esta com o nome
+      // certo. A ordem do TCP garante que chega primeiro.
+      PacketSendA(handle, mkAuthNickname, client.AuthNickname);
+
       // Havia um mkJoinRoom esperando a validacao: atende agora.
       if client.JoinDeferred then
       begin

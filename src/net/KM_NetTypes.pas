@@ -141,7 +141,13 @@ type
     // kam_brasil: Client sends its Kam Brasil session token right after connecting.
     // The server validates it against our API and only then lets the client join a
     // room. Ignored entirely when the server has RequireAuth turned off.
-    mkAuthToken
+    mkAuthToken,
+
+    // kam_brasil: Server tells the client which nickname its account owns. Sent
+    // right after a successful validation, before the join is answered, so the
+    // client already has the right name when it enters the room -- including when
+    // it is the one getting host rights.
+    mkAuthNickname
   );
   // ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
   // ^^^ Add new network command types to the end of the list. Check explanation above ^^^
@@ -217,7 +223,8 @@ const
     pfBinary,   //mkFileProgress
     pfNoData,   //mkVote
     pfStringW,  //mkAskToSendCrashreport
-    pfStringA   //mkAuthToken -- kam_brasil: o token e um JWT, ASCII puro
+    pfStringA,  //mkAuthToken -- kam_brasil: o token e um JWT, ASCII puro
+    pfStringA   //mkAuthNickname -- kam_brasil
   );
 
 
