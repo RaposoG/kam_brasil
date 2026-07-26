@@ -46,7 +46,17 @@ const EXCLUDED_FILES = [
   'kambrasil.json', // marcador de versao instalada, e local
 ]
 
-const EXCLUDED_EXTENSIONS = ['.log', '.ini', '.dcu', '.o', '.ppu', '.identcache', '.map', '.drc', '.res']
+/**
+ * Só artefatos de build, que nunca são conteúdo de jogo.
+ *
+ * Esta lista é rede de segurança, não a regra: quem decide o que entra é o
+ * `brasil/scripts/stage-release.ts`, por lista de inclusão. Toda extensão a mais
+ * aqui é risco de descartar conteúdo legítimo em silêncio.
+ *
+ * `.map` **não** entra: é o terreno dos mapas do KaM, não o linker map do
+ * Delphi. Excluí-lo publicaria centenas de mapas que não carregam.
+ */
+const EXCLUDED_EXTENSIONS = ['.dcu', '.o', '.ppu', '.identcache', '.drc']
 
 function isExcluded(relPath: string): boolean {
   const lower = relPath.toLowerCase()
