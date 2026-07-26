@@ -36,6 +36,10 @@ keyring = "4"
 # Verificacao de integridade do cliente baixado.
 sha2 = "0.10"
 
+# Localiza a pasta Documentos respeitando redirecionamento (OneDrive, por
+# exemplo). Hardcodar %USERPROFILE%\Documents erraria nessas maquinas.
+dirs = "6"
+
 # fs/io assincronos para o download. O Tauri ja usa tokio; declaramos as
 # features que precisamos em vez de depender das dele por acaso.
 tokio = { version = "1", features = ["fs", "io-util"] }

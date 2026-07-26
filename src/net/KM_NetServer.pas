@@ -65,6 +65,13 @@ type
     // kam_brasil: nickname confirmado pela nossa API. Vazio = ainda nao
     // autenticado. So e consultado quando RequireAuth esta ligado.
     fAuthNickname: AnsiString;
+    // Token recebido e ainda em validacao. O cliente manda mkAuthToken e logo
+    // em seguida mkJoinRoom, entao o pedido de sala quase sempre chega ANTES da
+    // resposta HTTP -- precisamos segurar o join em vez de recusar.
+    fAuthPending: Boolean;
+    fJoinDeferred: Boolean;
+    fJoinRoom: Integer;
+    fJoinGameRev: TKMGameRevision;
   public
     constructor Create(aHandle: TKMNetHandleIndex; aRoom: Integer);
     procedure AddQueuedPacket(aData: Pointer; aLength: Cardinal);
@@ -74,6 +81,10 @@ type
     property Ping: Word read fPing write fPing;
     property FPS: Word read fFPS write fFPS;
     property AuthNickname: AnsiString read fAuthNickname write fAuthNickname;
+    property AuthPending: Boolean read fAuthPending write fAuthPending;
+    property JoinDeferred: Boolean read fJoinDeferred write fJoinDeferred;
+    property JoinRoom: Integer read fJoinRoom write fJoinRoom;
+    property JoinGameRev: TKMGameRevision read fJoinGameRev write fJoinGameRev;
   end;
 
 
@@ -457,16 +468,25 @@ begin
 
   if client <> nil then
   begin
+    client.AuthPending := False;
+
     // A API responde "ok <nickname>" em texto puro.
     if Copy(response, 1, 3) = 'ok ' then
     begin
       client.AuthNickname := AnsiString(Trim(Copy(response, 4, Length(response))));
       Status('Client ' + IntToStr(handle) + ' authenticated as ' + string(client.AuthNickname));
+
+      // Havia um mkJoinRoom esperando a validacao: atende agora.
+      if client.JoinDeferred then
+      begin
+        client.JoinDeferred := False;
+        AddClientToRoom(handle, client.JoinRoom, client.JoinGameRev);
+      end;
     end
     else
     begin
       Status('Client ' + IntToStr(handle) + ' failed authentication');
-      PacketSend(handle, mkKicked, TX_KB_NOT_AUTHENTICATED, True);
+      PacketSend(handle, mkRefuseToJoin, TX_KB_NOT_AUTHENTICATED, True);
       fServer.Kick(handle);
     end;
   end;
@@ -487,7 +507,7 @@ begin
   Status('Auth request failed for client ' + IntToStr(handle) + ': ' + aText);
   if IsValidHandle(handle) then
   begin
-    PacketSend(handle, mkKicked, TX_KB_NOT_AUTHENTICATED, True);
+    PacketSend(handle, mkRefuseToJoin, TX_KB_NOT_AUTHENTICATED, True);
     fServer.Kick(handle);
   end;
 
@@ -1029,7 +1049,12 @@ begin
             begin
               aData.ReadA(tmpStringA);
               if fAuthRequire then
+              begin
+                client := fClientList.GetByHandle(aSenderHandle);
+                if client <> nil then
+                  client.AuthPending := True;
                 AuthEnqueue(aSenderHandle, tmpStringA);
+              end;
               // Com auth desligada o pacote e simplesmente ignorado, o que
               // mantem clientes novos compativeis com servidores antigos.
             end;
@@ -1042,11 +1067,29 @@ begin
               // kam_brasil: sem conta validada nao entra em sala nenhuma.
               // Esta e a fronteira que realmente vale -- o mkAskToJoin (nickname)
               // vai para o host, que e um jogador e nao decide isto.
-              if fAuthRequire and (fClientList.GetByHandle(aSenderHandle).AuthNickname = '') then
+              if fAuthRequire then
               begin
-                PacketSend(aSenderHandle, mkKicked, TX_KB_NOT_AUTHENTICATED, True);
-                fServer.Kick(aSenderHandle);
-                Exit;
+                client := fClientList.GetByHandle(aSenderHandle);
+                if (client <> nil) and (client.AuthNickname = '') then
+                begin
+                  if client.AuthPending then
+                  begin
+                    // Validacao em curso: guarda o pedido e responde quando a
+                    // API voltar. Recusar aqui seria uma corrida perdida, ja que
+                    // o mkJoinRoom vem logo atras do mkAuthToken.
+                    client.JoinDeferred := True;
+                    client.JoinRoom := tmpInt;
+                    client.JoinGameRev := gameRev;
+                    Exit;
+                  end;
+
+                  // Nenhum token foi enviado: cliente sem launcher.
+                  // mkRefuseToJoin, e nao mkKicked: nesta fase o cliente ainda
+                  // nao atribuiu OnDisconnect, e chama-lo seria ponteiro nulo.
+                  PacketSend(aSenderHandle, mkRefuseToJoin, TX_KB_NOT_AUTHENTICATED, True);
+                  fServer.Kick(aSenderHandle);
+                  Exit;
+                end;
               end;
 
               if InRange(tmpInt, 0, Length(fRoomInfo)-1)

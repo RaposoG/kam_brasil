@@ -221,40 +221,96 @@ pub async fn install_update(app: AppHandle, release: LatestRelease) -> Result<Ga
     Ok(status_of(&dir))
 }
 
-/// Grava o nickname da conta nas configurações do jogo.
+/// Onde o KaM guarda configurações do jogador.
 ///
-/// O KaM guarda o nome usado em multiplayer no XML de settings, em
-/// `Game/Multiplayer/@Name`. Escrevê-lo aqui faz o nick da conta valer dentro do
-/// jogo já hoje, sem alterar uma linha de Pascal.
+/// Espelha `CreateAndGetDocumentsSavePath` do Pascal:
+/// `Documentos\My Games\Knights and Merchants Remake\`. **Não é** a pasta do
+/// jogo — `USE_KMR_DIR_FOR_SETTINGS` só vale em builds de debug.
 ///
-/// É conveniência, não autoridade: o jogador ainda pode editar o XML. A
-/// imposição de verdade acontece quando o servidor dedicado derivar o nickname
-/// do token (Fase 1b).
-fn write_nickname(dir: &Path, nickname: &str) -> Result<(), String> {
-    // Nomes de arquivo que o jogo usa, em ordem de preferência.
-    for name in ["kmr_dev.xml", "KaM Remake Settings.xml"] {
-        let path = dir.join(name);
-        let Ok(content) = std::fs::read_to_string(&path) else { continue };
+/// Usa a API de pastas conhecidas em vez de montar `%USERPROFILE%\Documents`,
+/// porque Documentos pode estar redirecionado (OneDrive, por exemplo).
+fn kam_settings_dir() -> Option<PathBuf> {
+    dirs::document_dir().map(|d| d.join("My Games").join("Knights and Merchants Remake"))
+}
 
-        // Substituição pontual do atributo Name dentro do bloco Multiplayer.
-        let Some(block_start) = content.find("<Multiplayer") else { continue };
-        let Some(block_end) = content[block_start..].find('>').map(|i| block_start + i) else { continue };
-        let block = &content[block_start..block_end];
+/// Substitui o valor de um atributo dentro de um elemento XML.
+///
+/// Edição textual pontual em vez de parsear e reescrever o XML: o jogo é dono
+/// desse arquivo e reescreve-o inteiro ao sair. Preservar tudo que não é nosso
+/// é mais seguro que reserializar.
+fn replace_xml_attr(content: &str, element: &str, attr: &str, value: &str) -> Option<String> {
+    let block_start = content.find(element)?;
+    let block_end = content[block_start..].find('>').map(|i| block_start + i)?;
+    let needle = format!("{attr}=\"");
+    let attr_start = content[block_start..block_end].find(&needle)?;
 
-        let Some(attr_start) = block.find("Name=\"") else { continue };
-        let value_start = block_start + attr_start + 6;
-        let Some(value_len) = content[value_start..].find('"') else { continue };
+    let value_start = block_start + attr_start + needle.len();
+    let value_len = content[value_start..].find('"')?;
 
-        let mut updated = String::with_capacity(content.len());
-        updated.push_str(&content[..value_start]);
-        updated.push_str(nickname);
-        updated.push_str(&content[value_start + value_len..]);
+    let mut updated = String::with_capacity(content.len());
+    updated.push_str(&content[..value_start]);
+    updated.push_str(value);
+    updated.push_str(&content[value_start + value_len..]);
+    Some(updated)
+}
 
-        return std::fs::write(&path, updated)
-            .map_err(|e| format!("não foi possível gravar o nickname: {e}"));
+/// Aponta o jogo para a nossa infraestrutura antes de lançá-lo.
+///
+/// Duas coisas, ambas em `Documentos\My Games\...`:
+///
+/// - **Nickname** em `KaM Remake Settings.xml`, `Game/Multiplayer/@Name`. Faz o
+///   nick da conta valer dentro do jogo sem alterar Pascal. É conveniência, não
+///   autoridade — o jogador ainda pode editar o arquivo. A imposição real vem do
+///   servidor, que recusa quem não tem token válido.
+/// - **Master server** em `KaM Remake Server Settings.ini`. Sem isto o jogo lista
+///   os servidores oficiais em vez dos nossos.
+///
+/// Falhas aqui não impedem de jogar: registramos e seguimos.
+fn configure_game(nickname: &str, api_base: &str) -> Result<(), String> {
+    let dir = kam_settings_dir().ok_or("não foi possível localizar a pasta Documentos")?;
+    std::fs::create_dir_all(&dir).map_err(|e| format!("não foi possível criar {}: {e}", dir.display()))?;
+
+    // --- nickname ---
+    let xml_path = dir.join("KaM Remake Settings.xml");
+    match std::fs::read_to_string(&xml_path) {
+        Ok(content) => {
+            if let Some(updated) = replace_xml_attr(&content, "<Multiplayer", "Name", nickname) {
+                std::fs::write(&xml_path, updated)
+                    .map_err(|e| format!("não foi possível gravar o nickname: {e}"))?;
+            }
+        }
+        Err(_) => {
+            // Primeira execução: o jogo ainda não criou o arquivo. Criamos o
+            // mínimo; ele preenche o resto com os padrões e regrava ao sair.
+            let minimal = format!(
+                "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<Root>\n  <Game>\n    <Multiplayer Name=\"{nickname}\"/>\n  </Game>\n</Root>\n"
+            );
+            std::fs::write(&xml_path, minimal)
+                .map_err(|e| format!("não foi possível criar as configurações do jogo: {e}"))?;
+        }
     }
 
-    // Sem arquivo de settings ainda (primeira execução): não é erro.
+    // --- master server ---
+    let ini_path = dir.join("KaM Remake Server Settings.ini");
+    let master = format!("{}/", api_base.trim_end_matches('/'));
+    let ini = match std::fs::read_to_string(&ini_path) {
+        Ok(content) if content.contains("MasterServerAddressNew=") => content
+            .lines()
+            .map(|line| {
+                if line.starts_with("MasterServerAddressNew=") {
+                    format!("MasterServerAddressNew={master}")
+                } else {
+                    line.to_string()
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("\r\n"),
+        Ok(content) => format!("{}\r\nMasterServerAddressNew={master}", content.trim_end()),
+        Err(_) => format!("[Server]\r\nMasterServerAddressNew={master}\r\n"),
+    };
+
+    std::fs::write(&ini_path, ini).map_err(|e| format!("não foi possível apontar o master server: {e}"))?;
+
     Ok(())
 }
 
@@ -268,9 +324,9 @@ pub async fn launch_game(state: State<'_, AppState>) -> Result<(), String> {
     }
 
     if let Some(nickname) = state.nickname() {
-        // Falhar aqui não impede de jogar — só significa que o nick no jogo
-        // continua o que estava antes.
-        if let Err(e) = write_nickname(&dir, &nickname) {
+        // Falhar aqui não impede de jogar — só significa que o jogo abre com a
+        // configuração anterior.
+        if let Err(e) = configure_game(&nickname, &state.api_base()) {
             eprintln!("aviso: {e}");
         }
     }
@@ -370,29 +426,31 @@ mod tests {
     }
 
     #[test]
-    fn escreve_nickname_no_xml_do_jogo() {
-        let dir = temp_dir("nickname");
-        std::fs::write(
-            dir.join("kmr_dev.xml"),
-            r#"<Game><Multiplayer Name="NoName" Other="x"/></Game>"#,
-        )
-        .unwrap();
+    fn troca_nickname_preservando_o_resto_do_xml() {
+        let xml = r#"<Root><Game><Multiplayer Name="NoName" LastIP="127.0.0.1"/><Misc A="1"/></Game></Root>"#;
+        let updated = replace_xml_attr(xml, "<Multiplayer", "Name", "Raposo").unwrap();
 
-        write_nickname(&dir, "Raposo").unwrap();
-
-        let content = std::fs::read_to_string(dir.join("kmr_dev.xml")).unwrap();
-        assert!(content.contains(r#"Name="Raposo""#), "nickname nao foi gravado: {content}");
-        assert!(content.contains(r#"Other="x""#), "o resto do XML deveria ficar intacto");
-
-        let _ = std::fs::remove_dir_all(&dir);
+        assert!(updated.contains(r#"Name="Raposo""#), "nickname nao trocado: {updated}");
+        assert!(updated.contains(r#"LastIP="127.0.0.1""#), "atributo vizinho deveria sobreviver");
+        assert!(updated.contains(r#"<Misc A="1"/>"#), "o resto do XML deveria ficar intacto");
     }
 
     #[test]
-    fn sem_arquivo_de_settings_nao_e_erro() {
-        // Primeira execucao: o jogo ainda nao gravou settings. Nao ha o que fazer,
-        // mas tambem nao ha motivo para impedir o jogador de jogar.
-        let dir = temp_dir("sem-settings");
-        assert!(write_nickname(&dir, "Raposo").is_ok());
-        let _ = std::fs::remove_dir_all(&dir);
+    fn nao_confunde_atributo_de_outro_elemento() {
+        // "Name" aparece antes, noutro elemento. A troca tem que acontecer
+        // dentro do Multiplayer, senao gravariamos o nick no lugar errado.
+        let xml = r#"<Root><Menu Name="algo"/><Multiplayer Name="NoName"/></Root>"#;
+        let updated = replace_xml_attr(xml, "<Multiplayer", "Name", "Raposo").unwrap();
+
+        assert!(updated.contains(r#"<Menu Name="algo"/>"#), "elemento anterior foi alterado: {updated}");
+        assert!(updated.contains(r#"<Multiplayer Name="Raposo"/>"#), "nickname nao trocado: {updated}");
+    }
+
+    #[test]
+    fn atributo_ausente_devolve_none() {
+        // Sem o atributo nao ha o que trocar -- e isso precisa ser distinguivel
+        // de sucesso, senao gravariamos o arquivo sem mudanca nenhuma.
+        let xml = r#"<Root><Multiplayer LastIP="127.0.0.1"/></Root>"#;
+        assert!(replace_xml_attr(xml, "<Multiplayer", "Name", "Raposo").is_none());
     }
 }

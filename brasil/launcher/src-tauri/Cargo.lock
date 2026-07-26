@@ -2038,6 +2038,7 @@ dependencies = [
 name = "launcher"
 version = "0.1.0"
 dependencies = [
+ "dirs",
  "keyring",
  "reqwest",
  "serde",

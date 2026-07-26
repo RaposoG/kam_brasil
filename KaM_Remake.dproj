@@ -9,6 +9,7 @@
         <ProjectGuid>{CB64F5E8-91AE-4497-A8C4-89668924F870}</ProjectGuid>
         <ProjectVersion>19.5</ProjectVersion>
         <TargetedPlatforms>3</TargetedPlatforms>
+        <ProjectName Condition="'$(ProjectName)'==''">KaM_Remake</ProjectName>
     </PropertyGroup>
     <PropertyGroup Condition="'$(Config)'=='Base' or '$(Base)'!=''">
         <Base>true</Base>
@@ -457,6 +458,7 @@
         <DCCReference Include="src\net\KM_NetAuthUnsecure.pas"/>
         <DCCReference Include="src\net\KM_NetAuthSecure.pas"/>
         <DCCReference Include="src\net\KM_NetClient.pas"/>
+        <DCCReference Include="src\net\KM_KamBrasilAuth.pas"/>
         <DCCReference Include="src\net\KM_NetClientOverbyte.pas"/>
         <DCCReference Include="src\net\KM_NetClientLNet.pas"/>
         <DCCReference Include="src\net\KM_NetConsts.pas"/>
@@ -600,21 +602,21 @@
         <BuildConfiguration Include="Base">
             <Key>Base</Key>
         </BuildConfiguration>
-        <BuildConfiguration Include="Release">
-            <Key>Cfg_1</Key>
-            <CfgParent>Base</CfgParent>
-        </BuildConfiguration>
         <BuildConfiguration Include="Debug">
             <Key>Cfg_2</Key>
-            <CfgParent>Base</CfgParent>
-        </BuildConfiguration>
-        <BuildConfiguration Include="DebugAI">
-            <Key>Cfg_3</Key>
             <CfgParent>Base</CfgParent>
         </BuildConfiguration>
         <BuildConfiguration Include="DebugAQ">
             <Key>Cfg_4</Key>
             <CfgParent>Cfg_2</CfgParent>
+        </BuildConfiguration>
+        <BuildConfiguration Include="Release">
+            <Key>Cfg_1</Key>
+            <CfgParent>Base</CfgParent>
+        </BuildConfiguration>
+        <BuildConfiguration Include="DebugAI">
+            <Key>Cfg_3</Key>
+            <CfgParent>Base</CfgParent>
         </BuildConfiguration>
     </ItemGroup>
     <ProjectExtensions>
