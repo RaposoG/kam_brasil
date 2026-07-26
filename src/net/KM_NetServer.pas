@@ -164,6 +164,7 @@ type
     procedure AuthProcessQueue;
     procedure AuthReceived(const aText: string);
     procedure AuthError(const aText: string);
+    function AuthNicknameAllowed(aHandle: TKMNetHandleIndex; aPacket: PByte; aLength: Word): Boolean;
 
     procedure Error(const aText: string);
     procedure Status(const aText: string);
@@ -451,6 +452,65 @@ begin
 
   fAuthBusyHandle := handle;
   fAuthHTTP.GetURL(fAuthVerifyUrl + '?token=' + UnicodeString(token), False);
+end;
+
+
+// Confere se o nickname anunciado ao host bate com o da conta autenticada.
+//
+// O mkAskToJoin nao e endereçado ao servidor -- vai para o HOST, que e um
+// jogador comum e portanto nao pode julgar identidade. Como o servidor repassa
+// o pacote, ele e o unico ponto onde da para verificar.
+//
+// Sem isto, o jogador entra com token valido e depois se apresenta no lobby com
+// o nome que quiser. O portao estaria certo e a identidade errada.
+//
+// LIMITACAO CONHECIDA: cobre quem ENTRA numa sala, nao quem a CRIA. O primeiro
+// cliente de uma sala recebe direitos de host, e nesse caso o cliente se
+// adiciona localmente sem enviar mkAskToJoin (ver mkConnectedToRoom em
+// KM_Networking) -- o pacote nunca passa por aqui. Fechar isso exige validar o
+// mkPlayersList que o host difunde, cujo parsing e bem mais complexo.
+//
+// FORMATO: aPacket[0] = kind, e o payload de mkAskToJoin e
+//   [solucao do challenge][Word tamanho][bytes do nickname]
+// A solucao do challenge e VAZIA porque compilamos com DBG_SKIP_SECURE_AUTH
+// (ver KaM_Remake.inc). Se algum dia usarmos KM_NetAuthSecure, este parsing
+// precisa ser revisto -- a solucao passaria a ocupar bytes aqui.
+function TKMNetServer.AuthNicknameAllowed(aHandle: TKMNetHandleIndex; aPacket: PByte; aLength: Word): Boolean;
+var
+  client: TKMServerClient;
+  nickLen: Word;
+  claimed: AnsiString;
+begin
+  Result := True;
+  if not fAuthRequire then Exit;
+
+  client := fClientList.GetByHandle(aHandle);
+  if (client = nil) or (client.AuthNickname = '') then Exit; // o portao ja cuidou disso
+
+  // Falha ao interpretar recusa em vez de liberar: numa verificacao de
+  // identidade, o caso duvidoso tem que ser tratado como negativo.
+  if aLength < 3 then
+  begin
+    Result := False;
+    Exit;
+  end;
+
+  nickLen := PWord(aPacket + 1)^;
+  if aLength < 3 + nickLen then
+  begin
+    Result := False;
+    Exit;
+  end;
+
+  SetLength(claimed, nickLen);
+  if nickLen > 0 then
+    Move((aPacket + 3)^, claimed[1], nickLen);
+
+  Result := (claimed = client.AuthNickname);
+
+  if not Result then
+    Status('Client ' + IntToStr(aHandle) + ' claimed nickname "' + string(claimed)
+           + '" but is authenticated as "' + string(client.AuthNickname) + '"');
 end;
 
 
@@ -1270,6 +1330,17 @@ begin
                   if senderRoom = fClientList[i].Room then
                     SendDataQueue(fClientList[i].Handle, @senderClient.fBuffer[0], packetLength+6);
         NET_ADDRESS_HOST:
+                // kam_brasil: o mkAskToJoin carrega o nickname e vai para o host.
+                // Este e o unico ponto por onde ele passa sob nosso controle.
+                if (packetLength > 0)
+                and (TKMNetMessageKind(senderClient.fBuffer[6]) = mkAskToJoin)
+                and not AuthNicknameAllowed(aHandle, @senderClient.fBuffer[6], packetLength) then
+                begin
+                  PacketSend(aHandle, mkRefuseToJoin, TX_KB_NICKNAME_MISMATCH, True);
+                  fServer.Kick(aHandle);
+                  Exit;
+                end
+                else
                 if senderRoom <> -1 then
                   SendDataQueue(fRoomInfo[senderRoom].HostHandle, @senderClient.fBuffer[0], packetLength+6);
         NET_ADDRESS_SERVER:

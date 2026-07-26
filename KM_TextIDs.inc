@@ -865,6 +865,7 @@ TX_NET_BANNED_BY_HOST = 767; //You were banned by the host
 TX_NET_SERVER_STOPPED = 760; //Server stopped responding
 TX_NET_INVALID_ROOM = 761; //Invalid room number
 TX_KB_NOT_AUTHENTICATED = 1605; //kam_brasil: Entre pelo launcher do Kam Brasil para jogar online
+TX_KB_NICKNAME_MISMATCH = 1606; //kam_brasil: Seu nome no jogo precisa ser o da sua conta
 TX_NET_BANS_RESET = 769; //The host reset all bans for this lobby
 TX_NET_VOTED = 796; //%s voted to return to the lobby (need %s more votes)
 TX_NET_VOTE_PASSED = 799; //%s voted to return to the lobby (vote passed)

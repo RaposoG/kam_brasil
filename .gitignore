@@ -117,4 +117,6 @@ SavesCMP/
 /brasil/launcher/src-tauri/gen/
 # Binarios das releases do cliente: nao vao para o git
 /brasil/api/releases/
+# Versao instalada do cliente, escrita pelo launcher
+/kambrasil.json
 # A regra global "*.log" acima ja cobre logs do bun/npm
