@@ -76,6 +76,9 @@ begin
                                       KMRange(fSettings.ServerLimitSpeedFrom, fSettings.ServerLimitSpeedTo),
                                       KMRange(fSettings.ServerLimitSpeedAfterPTFrom, fSettings.ServerLimitSpeedAfterPTTo));
   fDedicatedServer.Server.GameFilter := GameFilter;
+  // kam_brasil: exigencia de conta. Desligada por padrao no ini.
+  // Antes do Start, para o socket nunca abrir sem a politica definida.
+  fDedicatedServer.Server.SetAuth(fSettings.RequireAuth, fSettings.AuthVerifyUrl);
   fDedicatedServer.OnMessage := fEventHandler.ServerStatusMessage;
   fDedicatedServer.Start(fSettings.ServerName, StrToInt(fSettings.ServerPort), fSettings.AnnounceServer, fSettings.ServerUDPAnnounce);
 

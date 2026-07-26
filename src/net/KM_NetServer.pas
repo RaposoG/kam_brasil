@@ -8,6 +8,7 @@ uses
   Classes, SysUtils, Math, VerySimpleXML,
   KM_CommonClasses, KM_NetGameInfo, KM_NetTypes,
   KM_Defaults, KM_CommonUtils, KM_CommonTypes,
+  KM_HTTPClient, // kam_brasil: validacao de token contra a nossa API
   {$IFDEF WDC}
     {$IFDEF CONSOLE}
       KM_ConsoleTimer
@@ -129,7 +130,30 @@ type
                          GameInfo: TKMNetGameInfo;
                        end;
 
+    // kam_brasil: autenticacao de jogadores contra a API.
+    //
+    // TKMHTTPClient atende UMA requisicao por vez (o wrapper chama Abort a cada
+    // GetURL novo), entao validacoes precisam ser serializadas numa fila em vez
+    // de disparadas em paralelo -- senao dois jogadores entrando juntos se
+    // atropelariam e um deles seria recusado sem motivo.
+    fAuthRequire: Boolean;
+    fAuthVerifyUrl: string;
+    fAuthHTTP: TKMHTTPClient;
+    fAuthBusyHandle: TKMNetHandleIndex; // NET_ADDRESS_EMPTY = ocioso
+    fAuthQueue: array of record
+                          Handle: TKMNetHandleIndex;
+                          Token: AnsiString;
+                        end;
+    fAuthQueueCount: Integer;
+
     fOnStatusMessage: TGetStrProc;
+
+    // kam_brasil
+    procedure AuthEnqueue(aHandle: TKMNetHandleIndex; const aToken: AnsiString);
+    procedure AuthProcessQueue;
+    procedure AuthReceived(const aText: string);
+    procedure AuthError(const aText: string);
+
     procedure Error(const aText: string);
     procedure Status(const aText: string);
     procedure ClientConnect(aHandle: TKMNetHandleIndex);
@@ -165,6 +189,8 @@ type
     procedure StartListening(aPort: Word; const aServerName: AnsiString);
     procedure StopListening;
     procedure ClearClients;
+    // kam_brasil: configurado depois do Create, como o GameFilter ja e.
+    procedure SetAuth(aRequire: Boolean; const aVerifyUrl: string);
     procedure MeasurePings;
     procedure UpdateStateIdle;
     procedure UpdateState(Sender: TObject);
@@ -314,6 +340,14 @@ begin
   fListening := False;
   fRoomCount := 0;
 
+  // kam_brasil
+  fAuthRequire := False;
+  fAuthQueueCount := 0;
+  fAuthBusyHandle := NET_ADDRESS_EMPTY;
+  fAuthHTTP := TKMHTTPClient.Create;
+  fAuthHTTP.OnReceive := AuthReceived;
+  fAuthHTTP.OnError := AuthError;
+
   {$IFDEF WDC}
     {$IFDEF CONSOLE}
       fTimer := TKMConsoleTimer.Create;
@@ -342,8 +376,122 @@ begin
   fEmptyGameInfo.Free;
   FreeAndNil(fTimer);
   FreeAndNil(fGameFilter);
+  FreeAndNil(fAuthHTTP); // kam_brasil
 
   inherited;
+end;
+
+
+{ kam_brasil: autenticacao }
+procedure TKMNetServer.SetAuth(aRequire: Boolean; const aVerifyUrl: string);
+begin
+  // Sem Status() aqui: o handler de log so e ligado em StartListening, e a
+  // configuracao precisa acontecer ANTES do socket abrir. O estado e logado la.
+  fAuthRequire := aRequire;
+  fAuthVerifyUrl := aVerifyUrl;
+end;
+
+
+procedure TKMNetServer.AuthEnqueue(aHandle: TKMNetHandleIndex; const aToken: AnsiString);
+var
+  I: Integer;
+begin
+  // Um token por cliente: reenviar substitui o pedido pendente em vez de
+  // acumular, senao um cliente malicioso encheria a fila sozinho.
+  for I := 0 to fAuthQueueCount - 1 do
+    if fAuthQueue[I].Handle = aHandle then
+    begin
+      fAuthQueue[I].Token := aToken;
+      Exit;
+    end;
+
+  if fAuthQueueCount >= Length(fAuthQueue) then
+    SetLength(fAuthQueue, fAuthQueueCount + 8);
+
+  fAuthQueue[fAuthQueueCount].Handle := aHandle;
+  fAuthQueue[fAuthQueueCount].Token := aToken;
+  Inc(fAuthQueueCount);
+end;
+
+
+procedure TKMNetServer.AuthProcessQueue;
+var
+  I: Integer;
+  handle: TKMNetHandleIndex;
+  token: AnsiString;
+begin
+  if not fAuthRequire then Exit;
+  if fAuthBusyHandle <> NET_ADDRESS_EMPTY then Exit; // ja tem uma validacao em curso
+  if fAuthQueueCount = 0 then Exit;
+
+  handle := fAuthQueue[0].Handle;
+  token := fAuthQueue[0].Token;
+
+  for I := 0 to fAuthQueueCount - 2 do
+    fAuthQueue[I] := fAuthQueue[I + 1];
+  Dec(fAuthQueueCount);
+
+  // O cliente pode ter caido enquanto esperava na fila.
+  if not IsValidHandle(handle) then
+  begin
+    AuthProcessQueue; // segue para o proximo
+    Exit;
+  end;
+
+  fAuthBusyHandle := handle;
+  fAuthHTTP.GetURL(fAuthVerifyUrl + '?token=' + UnicodeString(token), False);
+end;
+
+
+procedure TKMNetServer.AuthReceived(const aText: string);
+var
+  handle: TKMNetHandleIndex;
+  client: TKMServerClient;
+  response: string;
+begin
+  handle := fAuthBusyHandle;
+  fAuthBusyHandle := NET_ADDRESS_EMPTY;
+
+  response := Trim(aText);
+  client := fClientList.GetByHandle(handle);
+
+  if client <> nil then
+  begin
+    // A API responde "ok <nickname>" em texto puro.
+    if Copy(response, 1, 3) = 'ok ' then
+    begin
+      client.AuthNickname := AnsiString(Trim(Copy(response, 4, Length(response))));
+      Status('Client ' + IntToStr(handle) + ' authenticated as ' + string(client.AuthNickname));
+    end
+    else
+    begin
+      Status('Client ' + IntToStr(handle) + ' failed authentication');
+      PacketSend(handle, mkKicked, TX_KB_NOT_AUTHENTICATED, True);
+      fServer.Kick(handle);
+    end;
+  end;
+
+  AuthProcessQueue;
+end;
+
+
+procedure TKMNetServer.AuthError(const aText: string);
+var
+  handle: TKMNetHandleIndex;
+begin
+  handle := fAuthBusyHandle;
+  fAuthBusyHandle := NET_ADDRESS_EMPTY;
+
+  // API fora do ar derruba quem esta entrando. Preferimos isso a deixar entrar
+  // sem verificar: um servidor que ignora falha de autenticacao nao autentica.
+  Status('Auth request failed for client ' + IntToStr(handle) + ': ' + aText);
+  if IsValidHandle(handle) then
+  begin
+    PacketSend(handle, mkKicked, TX_KB_NOT_AUTHENTICATED, True);
+    fServer.Kick(handle);
+  end;
+
+  AuthProcessQueue;
 end;
 
 
@@ -373,6 +521,14 @@ begin
   fServer.OnDataAvailable := DataAvailable;
   fServer.StartListening(aPort);
   Status('Listening on port ' + IntToStr(aPort));
+
+  // kam_brasil: registra a politica de autenticacao em vigor. Fica aqui porque
+  // e o primeiro ponto onde o handler de log ja esta ligado.
+  if fAuthRequire then
+    Status('Kam Brasil auth ENABLED, verifying against ' + fAuthVerifyUrl)
+  else
+    Status('Kam Brasil auth disabled (open server)');
+
   fListening := True;
   SaveHTMLStatus;
 end;
@@ -442,6 +598,13 @@ end;
 procedure TKMNetServer.UpdateStateIdle;
 begin
   {$IFDEF FPC} fServer.UpdateStateIdle; {$ENDIF}
+
+  // kam_brasil: no FPC o cliente HTTP so avanca quando bombeado daqui.
+  if fAuthRequire then
+  begin
+    fAuthHTTP.UpdateStateIdle;
+    AuthProcessQueue;
+  end;
 end;
 
 
@@ -861,10 +1024,31 @@ begin
   senderIsHost := (senderRoom <> -1) and (fRoomInfo[senderRoom].HostHandle = aSenderHandle);
 
   case aMessageKind of
+    // kam_brasil: cliente manda o token da conta logo apos conectar.
+    mkAuthToken:
+            begin
+              aData.ReadA(tmpStringA);
+              if fAuthRequire then
+                AuthEnqueue(aSenderHandle, tmpStringA);
+              // Com auth desligada o pacote e simplesmente ignorado, o que
+              // mantem clientes novos compativeis com servidores antigos.
+            end;
+
     mkJoinRoom:
             begin
               aData.Read(tmpInt); //Room to join
               aData.Read(gameRev);
+
+              // kam_brasil: sem conta validada nao entra em sala nenhuma.
+              // Esta e a fronteira que realmente vale -- o mkAskToJoin (nickname)
+              // vai para o host, que e um jogador e nao decide isto.
+              if fAuthRequire and (fClientList.GetByHandle(aSenderHandle).AuthNickname = '') then
+              begin
+                PacketSend(aSenderHandle, mkKicked, TX_KB_NOT_AUTHENTICATED, True);
+                fServer.Kick(aSenderHandle);
+                Exit;
+              end;
+
               if InRange(tmpInt, 0, Length(fRoomInfo)-1)
               and (fRoomInfo[tmpInt].HostHandle <> NET_ADDRESS_EMPTY)
               //Once game has started don't ask for passwords so clients can reconnect

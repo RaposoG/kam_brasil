@@ -38,6 +38,11 @@ type
 
     fServerMapsRoster: TKMMapsCRCList;
 
+    // kam_brasil: exigir token de conta para entrar numa sala.
+    // Somente leitura em runtime -- vem do ini e nao muda enquanto roda.
+    fRequireAuth: Boolean;
+    fAuthVerifyUrl: string;
+
     // Server
     procedure SetMasterServerAddress(const aValue: string);
     procedure SetServerName(const aValue: AnsiString);
@@ -70,6 +75,10 @@ type
     property MasterServerAddress: string read fMasterServerAddress write SetMasterServerAddress;
     property ServerName: AnsiString read fServerName write SetServerName;
     property MasterAnnounceInterval: Integer read fMasterAnnounceInterval write SetMasterAnnounceInterval;
+
+    // kam_brasil
+    property RequireAuth: Boolean read fRequireAuth;
+    property AuthVerifyUrl: string read fAuthVerifyUrl;
     property AnnounceServer: Boolean read fAnnounceServer write SetAnnounceServer;
     property MaxRooms: Integer read fMaxRooms write SetMaxRooms;
     property ServerPacketsAccumulatingDelay: Integer read fServerPacketsAccumulatingDelay write SetServerPacketsAccumulatingDelay;
@@ -167,6 +176,11 @@ begin
     fHTMLStatusFile         := ini.ReadString ('Server','HTMLStatusFile','KaM_Remake_Server_Status.html');
     fServerWelcomeMessage   := {$IFDEF FPC} UTF8Decode {$ENDIF} (ini.ReadString ('Server','WelcomeMessage',''));
 
+    // kam_brasil: padrao DESLIGADO de proposito. Um servidor exigindo token
+    // antes de os clientes saberem envia-lo deixaria a comunidade sem jogar.
+    fRequireAuth            := ini.ReadBool  ('Server', 'KamBrasilRequireAuth', False);
+    fAuthVerifyUrl          := ini.ReadString('Server', 'KamBrasilAuthVerifyUrl', 'http://127.0.0.1:3000/auth/verify');
+
     fServerDynamicFOW       := ini.ReadBool  ('Server', 'DynamicFOW', False);
     fServerMapsRosterEnabled:= ini.ReadBool  ('Server', 'MapsRosterEnabled', False);
     fServerMapsRoster.Enabled := fServerMapsRosterEnabled; //Set enabled before fServerMapsRoster load
@@ -215,6 +229,10 @@ begin
     ini.WriteString ('Server','MasterServerAddressNew',       fMasterServerAddress);
     ini.WriteInteger('Server','AutoKickTimeout',              fAutoKickTimeout);
     ini.WriteInteger('Server','PingMeasurementInterval',      fPingInterval);
+
+    // kam_brasil
+    ini.WriteBool   ('Server','KamBrasilRequireAuth',   fRequireAuth);
+    ini.WriteString ('Server','KamBrasilAuthVerifyUrl', fAuthVerifyUrl);
 
     ini.WriteBool   ('Server','DynamicFOW',             fServerDynamicFOW);
     ini.WriteBool   ('Server','MapsRosterEnabled',      fServerMapsRosterEnabled);
