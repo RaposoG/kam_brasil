@@ -1,14 +1,25 @@
 import { Column, CreateDateColumn, Entity, Index, PrimaryGeneratedColumn } from 'typeorm'
 
 /**
- * Uma versão publicada do cliente do jogo.
+ * Uma versão publicada do cliente.
  *
- * A API guarda o *registro* da release, não o binário: `fileName` aponta para um
- * arquivo servido em `/downloads/`. Assim dá para trocar a hospedagem depois
- * (S3, CDN, release do GitHub) mexendo só em como a URL é montada.
+ * Uma release **não** é um arquivo: é uma árvore. O executável, os mapas, as
+ * campanhas e os textos somam centenas de MB, e um pacote único obrigaria o
+ * jogador a rebaixar tudo a cada correção de bug.
  *
- * Releases são imutáveis: para corrigir algo, publique uma versão nova. É o que
- * garante que o sha256 que um cliente baixou hoje continue valendo amanhã.
+ * Por isso o banco guarda só os metadados e aponta para um **manifesto** em
+ * disco, que lista cada arquivo com tamanho e sha256. O launcher compara o
+ * manifesto com o que tem localmente e baixa apenas a diferença — instalação
+ * nova e atualização passam pelo mesmo caminho de código.
+ *
+ * Layout em disco, dentro de RELEASES_DIR:
+ *
+ *   <version>/manifest.json
+ *   <version>/files/...        (a árvore em si)
+ *
+ * O que NÃO entra aqui: sprites, sons, músicas e os `.dat` de unidades e casas.
+ * Esses vêm do Knights and Merchants original e são gerados na máquina do
+ * jogador, a partir da cópia dele. Nada do jogo comercial sai do nosso servidor.
  */
 @Entity('client_releases')
 export class ClientRelease {
@@ -23,16 +34,15 @@ export class ClientRelease {
   @Column({ type: 'varchar', length: 32 })
   gameRevision!: string
 
-  /** Nome do arquivo dentro da pasta de releases. */
-  @Column({ type: 'varchar', length: 128 })
-  fileName!: string
-
-  /** Hex minúsculo. O launcher recusa o download se não bater. */
-  @Column({ type: 'varchar', length: 64 })
-  sha256!: string
+  @Column({ type: 'int' })
+  fileCount!: number
 
   @Column({ type: 'bigint' })
-  sizeBytes!: string
+  totalBytes!: string
+
+  /** Integridade do próprio manifesto. */
+  @Column({ type: 'varchar', length: 64 })
+  manifestSha256!: string
 
   @Column({ type: 'text', default: '' })
   notes!: string

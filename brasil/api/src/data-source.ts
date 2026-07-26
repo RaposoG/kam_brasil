@@ -9,6 +9,7 @@ import { PlayTicket } from './entities/play-ticket.ts'
 import { Init1785018600000 } from './migrations/1785018600000-init.ts'
 import { ClientReleases1785040800000 } from './migrations/1785040800000-client-releases.ts'
 import { PlayTickets1785060000000 } from './migrations/1785060000000-play-tickets.ts'
+import { ReleaseManifest1785070000000 } from './migrations/1785070000000-release-manifest.ts'
 
 export const dataSource = new DataSource({
   type: 'postgres',
@@ -16,7 +17,12 @@ export const dataSource = new DataSource({
   entities: [Account, Session, GameServer, ClientRelease, PlayTicket],
   // Nunca true: o schema é versionado por migration, inclusive em desenvolvimento.
   synchronize: false,
-  migrations: [Init1785018600000, ClientReleases1785040800000, PlayTickets1785060000000],
+  migrations: [
+    Init1785018600000,
+    ClientReleases1785040800000,
+    PlayTickets1785060000000,
+    ReleaseManifest1785070000000,
+  ],
   logging: config.isDev ? ['error', 'warn'] : ['error'],
 })
 

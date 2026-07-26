@@ -20,12 +20,17 @@
       }
     ],
     "security": {
-      "csp": "default-src 'self'; connect-src 'self' http://localhost:3000 https://*.kambrasil.com.br"
+      "csp": "default-src 'self'; connect-src 'self' http://localhost:3000 https://kam-api.melhorzin.com"
     }
   },
   "bundle": {
     "active": true,
-    "targets": "all",
+    "publisher": "Kam Brasil",
+    "copyright": "Kam Brasil — comunidade brasileira de Knights and Merchants",
+    "shortDescription": "Launcher do Kam Brasil",
+    "longDescription": "Instala, atualiza e abre o Kam Brasil. Requer o Knights and Merchants: The Peasants Rebellion original instalado.",
+    "category": "Game",
+    "targets": ["msi", "nsis"],
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",

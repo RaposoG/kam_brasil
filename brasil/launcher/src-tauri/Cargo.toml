@@ -43,6 +43,7 @@ dirs = "6"
 # fs/io assincronos para o download. O Tauri ja usa tokio; declaramos as
 # features que precisamos em vez de depender das dele por acaso.
 tokio = { version = "1", features = ["fs", "io-util"] }
+tauri-plugin-dialog = "2.7.2"
 
 [dev-dependencies]
 # Runtime para os testes de integracao de auth.rs (rodam com --ignored).

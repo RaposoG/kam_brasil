@@ -16,8 +16,9 @@ use std::sync::Mutex;
 use serde::{Deserialize, Serialize};
 use tauri::State;
 
-/// Sobrescrevível em tempo de compilação: `KAMBRASIL_API=https://... cargo build`
-const DEFAULT_API_BASE: &str = "http://localhost:3000";
+/// Produção. Sobrescrevível em tempo de compilação para desenvolvimento:
+/// `KAMBRASIL_API=http://localhost:3000 cargo build`
+const DEFAULT_API_BASE: &str = "https://kam-api.melhorzin.com";
 
 const KEYRING_SERVICE: &str = "br.com.kambrasil.launcher";
 const KEYRING_USER: &str = "session-token";

@@ -16,71 +16,90 @@ export interface Account {
 export interface LatestRelease {
   version: string
   gameRevision: string
-  downloadUrl: string
-  sha256: string
-  sizeBytes: number
+  manifestUrl: string
+  baseUrl: string
+  totalBytes: number
+  fileCount: number
   notes: string
+}
+
+export interface UpdateCheck {
+  path: string
+  installedVersion: string | null
+  latest: LatestRelease | null
+  needsUpdate: boolean
 }
 
 export interface GameStatus {
   path: string
   installed: boolean
   version: string | null
+  assetsReady: boolean
 }
 
-export interface UpdateCheck {
-  status: GameStatus
-  latest: LatestRelease | null
-  needsUpdate: boolean
+export interface OriginalGame {
+  path: string
+  source: string
 }
 
-export interface DownloadProgress {
-  received: number
-  total: number
+export interface InstallProgress {
+  phase: 'verificando' | 'baixando' | 'assets' | 'pronto'
+  current_file: string
+  files_done: number
+  files_total: number
+  bytes_done: number
+  bytes_total: number
+  bytes_per_second: number
+}
+
+export interface AssetProgress {
+  step: string
+  detail: string
 }
 
 // --- contas ---
 
-export function register(email: string, nickname: string, password: string): Promise<Account> {
-  return invoke('register', { email, nickname, password })
-}
+export const register = (email: string, nickname: string, password: string): Promise<Account> =>
+  invoke('register', { email, nickname, password })
 
-export function login(login: string, password: string): Promise<Account> {
-  return invoke('login', { login, password })
-}
+export const login = (login: string, password: string): Promise<Account> =>
+  invoke('login', { login, password })
 
-export function logout(): Promise<void> {
-  return invoke('logout')
-}
+export const logout = (): Promise<void> => invoke('logout')
 
 /** Reaproveita a sessão guardada no cofre do sistema. `null` = precisa logar. */
-export function restoreSession(): Promise<Account | null> {
-  return invoke('restore_session')
-}
+export const restoreSession = (): Promise<Account | null> => invoke('restore_session')
 
-export function apiBase(): Promise<string> {
-  return invoke('api_base')
-}
+export const apiBase = (): Promise<string> => invoke('api_base')
 
-// --- jogo ---
+// --- jogo original ---
 
-export function gameStatus(): Promise<GameStatus> {
-  return invoke('game_status')
-}
+/** `null` = não achamos; a UI precisa pedir a pasta ao jogador. */
+export const findOriginalGame = (): Promise<OriginalGame | null> => invoke('find_original_game')
 
-export function checkUpdate(): Promise<UpdateCheck> {
-  return invoke('check_update')
-}
+export const checkOriginalGame = (path: string): Promise<OriginalGame> =>
+  invoke('check_original_game', { path })
 
-export function installUpdate(release: LatestRelease): Promise<GameStatus> {
-  return invoke('install_update', { release })
-}
+// --- instalação ---
 
-export function launchGame(): Promise<void> {
-  return invoke('launch_game')
-}
+export const checkUpdate = (): Promise<UpdateCheck> => invoke('check_update')
 
-/** Assina o progresso do download. Devolve a função para cancelar a assinatura. */
-export function onDownloadProgress(handler: (p: DownloadProgress) => void) {
-  return listen<DownloadProgress>('download-progress', (event) => handler(event.payload))
-}
+export const installUpdate = (release: LatestRelease): Promise<void> =>
+  invoke('install_update', { release })
+
+export const gameStatus = (): Promise<GameStatus> => invoke('game_status')
+
+export const assetsStatus = (): Promise<boolean> => invoke('assets_status')
+
+export const generateAssets = (originalPath: string): Promise<void> =>
+  invoke('generate_assets', { originalPath })
+
+export const launchGame = (): Promise<void> => invoke('launch_game')
+
+// --- eventos ---
+
+export const onInstallProgress = (handler: (p: InstallProgress) => void) =>
+  listen<InstallProgress>('install-progress', (e) => handler(e.payload))
+
+export const onAssetProgress = (handler: (p: AssetProgress) => void) =>
+  listen<AssetProgress>('asset-progress', (e) => handler(e.payload))
