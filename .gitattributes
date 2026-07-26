@@ -77,3 +77,9 @@
 *.libx text eol=crlf
 *.script text eol=crlf
 
+# Kam Brasil: a plataforma online e toolchain Node/Rust, que espera LF.
+# Precisa vir depois das regras acima para sobrescrever *.txt/*.xml/*.ini dentro de brasil/.
+brasil/** text eol=lf
+brasil/**/*.png binary
+brasil/**/*.ico binary
+
