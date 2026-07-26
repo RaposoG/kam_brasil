@@ -13,6 +13,15 @@ const schema = z.object({
   SESSION_TTL_DAYS: z.coerce.number().int().positive().default(30),
 
   /**
+   * Validade do ticket que o launcher entrega ao jogo.
+   *
+   * Curto porque ele passa por um arquivo temporário, mas não curto demais: o
+   * cliente reenvia a mesma credencial ao reconectar depois de uma queda, e um
+   * ticket vencido deixaria o jogador fora da própria partida.
+   */
+  PLAY_TICKET_TTL_MINUTES: z.coerce.number().int().positive().default(720),
+
+  /**
    * IPs autorizados a anunciar servidor, separados por vírgula.
    *
    * O jogo não manda credencial nenhuma no serveradd.php — os parâmetros são fixos

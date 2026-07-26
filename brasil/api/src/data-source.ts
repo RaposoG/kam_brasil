@@ -5,16 +5,18 @@ import { Account } from './entities/account.ts'
 import { Session } from './entities/session.ts'
 import { GameServer } from './entities/game-server.ts'
 import { ClientRelease } from './entities/client-release.ts'
+import { PlayTicket } from './entities/play-ticket.ts'
 import { Init1785018600000 } from './migrations/1785018600000-init.ts'
 import { ClientReleases1785040800000 } from './migrations/1785040800000-client-releases.ts'
+import { PlayTickets1785060000000 } from './migrations/1785060000000-play-tickets.ts'
 
 export const dataSource = new DataSource({
   type: 'postgres',
   url: config.DATABASE_URL,
-  entities: [Account, Session, GameServer, ClientRelease],
+  entities: [Account, Session, GameServer, ClientRelease, PlayTicket],
   // Nunca true: o schema é versionado por migration, inclusive em desenvolvimento.
   synchronize: false,
-  migrations: [Init1785018600000, ClientReleases1785040800000],
+  migrations: [Init1785018600000, ClientReleases1785040800000, PlayTickets1785060000000],
   logging: config.isDev ? ['error', 'warn'] : ['error'],
 })
 
@@ -22,3 +24,4 @@ export const accounts = () => dataSource.getRepository(Account)
 export const sessions = () => dataSource.getRepository(Session)
 export const gameServers = () => dataSource.getRepository(GameServer)
 export const clientReleases = () => dataSource.getRepository(ClientRelease)
+export const playTickets = () => dataSource.getRepository(PlayTicket)

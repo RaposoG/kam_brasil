@@ -334,23 +334,30 @@ pub async fn launch_game(state: State<'_, AppState>) -> Result<(), String> {
     let mut command = std::process::Command::new(&exe);
     command.current_dir(&dir);
 
-    // Entrega do token: arquivo temporário cujo caminho vai por variável de
+    // Entrega da credencial: arquivo temporário cujo caminho vai por variável de
     // ambiente. NÃO por argumento de linha de comando — argumentos aparecem na
     // lista de processos para qualquer usuário da máquina.
     //
+    // O que vai no arquivo é um **ticket de partida**, não o token de sessão. O
+    // ticket vale poucas horas e só serve para entrar no servidor de jogo; se
+    // vazasse, não daria acesso à conta. O token de sessão nunca sai daqui.
+    //
     // O jogo apaga o arquivo assim que o lê (ver KM_KamBrasilAuth.pas). O que
-    // sobra aqui é o caso do jogo nem abrir; por isso o nome é previsível e
+    // sobra é o caso do jogo nem abrir; por isso o nome é previsível e
     // sobrescrito a cada lançamento, em vez de acumular.
     let token_path = std::env::temp_dir().join("kambrasil-session.token");
-    if let Some(token) = state.token() {
-        tokio::fs::write(&token_path, token)
-            .await
-            .map_err(|e| format!("não foi possível preparar a sessão do jogo: {e}"))?;
-        command.env("KAMBRASIL_TOKEN_FILE", &token_path);
-    } else {
-        // Sem sessão não há o que entregar. Deixar um arquivo velho para trás
-        // faria o jogo usar um token de outro login.
-        let _ = tokio::fs::remove_file(&token_path).await;
+    match state.play_ticket().await {
+        Some(ticket) => {
+            tokio::fs::write(&token_path, ticket)
+                .await
+                .map_err(|e| format!("não foi possível preparar a sessão do jogo: {e}"))?;
+            command.env("KAMBRASIL_TOKEN_FILE", &token_path);
+        }
+        None => {
+            // Sem ticket não há o que entregar. Deixar um arquivo velho para
+            // trás faria o jogo usar a credencial de outro login.
+            let _ = tokio::fs::remove_file(&token_path).await;
+        }
     }
 
     command

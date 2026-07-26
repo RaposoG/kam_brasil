@@ -1,40 +1,66 @@
+import { randomBytes } from 'node:crypto'
 import type { FastifyInstance } from 'fastify'
-import { IsNull, MoreThan } from 'typeorm'
+import { LessThan, MoreThan } from 'typeorm'
 import { config } from '../config.ts'
-import { sessions } from '../data-source.ts'
+import { playTickets } from '../data-source.ts'
 
 /**
- * Verificação de token para o servidor de jogo.
+ * Tickets de partida e a verificação feita pelo servidor de jogo.
  *
- * Quem chama aqui é o `KaM_DedicatedServer`, um binário Pascal cujo cliente HTTP
- * (`KM_HTTPClient`) só faz **GET, sem TLS e sem headers customizados**. Por isso
- * esta rota é GET com o token na query, e não um POST com Authorization como
- * seria natural.
- *
- * Duas consequências que precisam ser respeitadas no deploy:
- *
- * 1. O servidor de jogo tem que rodar **na mesma máquina que a API** e chamar
- *    via `localhost`. O token trafega em claro; fora do loopback isso seria
- *    inaceitável.
- * 2. A rota **não loga a query string** — token em log é token vazado. O
- *    `disableRequestLogging` abaixo cuida disso.
- *
- * Quando o cliente Pascal ganhar POST+TLS, esta rota vira um POST comum.
+ * O jogo nunca carrega o token de sessão. O launcher troca a sessão por um
+ * ticket curto (ver entities/play-ticket.ts) e entrega só o ticket. Assim a
+ * credencial que passa por arquivo temporário vale minutos e não abre nada
+ * além de entrar no servidor.
  */
 export default async function verifyRoutes(app: FastifyInstance) {
+  /**
+   * Troca a sessão por um ticket de partida. Chamado pelo launcher logo antes
+   * de abrir o jogo.
+   */
+  app.post('/auth/ticket', { onRequest: [app.authenticate] }, async (request) => {
+    const expiresAt = new Date(Date.now() + config.PLAY_TICKET_TTL_MINUTES * 60 * 1000)
+
+    const ticket = await playTickets().save(
+      playTickets().create({
+        ticket: randomBytes(32).toString('hex'),
+        sessionId: request.user.jti,
+        expiresAt,
+        lastUsedAt: null,
+      }),
+    )
+
+    // Limpeza oportunista: tickets vencidos não servem para nada e a tabela
+    // cresceria para sempre sem isto.
+    await playTickets().delete({ expiresAt: LessThan(new Date()) })
+
+    return { ticket: ticket.ticket, expiresAt }
+  })
+
+  /**
+   * Verificação de ticket para o servidor de jogo.
+   *
+   * Quem chama aqui é o `KaM_DedicatedServer`, um binário Pascal cujo cliente
+   * HTTP (`KM_HTTPClient`) só faz **GET, sem TLS e sem headers customizados**.
+   * Por isso é GET com o ticket na query, e a resposta é texto puro de uma
+   * linha — o Pascal não tem parser de JSON.
+   *
+   * Duas consequências que o deploy precisa respeitar:
+   *
+   * 1. O servidor de jogo tem que rodar **na mesma máquina que a API** e chamar
+   *    via `localhost`. O ticket trafega em claro; fora do loopback seria
+   *    inaceitável.
+   * 2. A rota **não loga a query string** — credencial em log é credencial
+   *    vazada.
+   */
   app.get(
     '/auth/verify',
-    {
-      // Sem isto, o Fastify logaria a URL completa — com o token dentro.
-      logLevel: 'silent',
-      config: { disableRequestLogging: true },
-    },
+    { logLevel: 'silent', config: { disableRequestLogging: true } },
     async (request, reply) => {
       reply.type('text/plain')
 
       const remoteIp = request.ip.replace(/^::ffff:/, '').replace(/^::1$/, '127.0.0.1')
       if (!config.verifyAllowedIps.includes(remoteIp)) {
-        request.log.warn({ remoteIp }, 'verificação de token recusada: origem fora do allowlist')
+        request.log.warn({ remoteIp }, 'verificação recusada: origem fora do allowlist')
         return reply.code(403).send('forbidden')
       }
 
@@ -43,30 +69,26 @@ export default async function verifyRoutes(app: FastifyInstance) {
         return reply.code(400).send('missing token')
       }
 
-      let payload: { jti?: unknown }
-      try {
-        payload = app.jwt.verify(token)
-      } catch {
-        return reply.code(401).send('invalid')
-      }
-
-      if (typeof payload.jti !== 'string') {
-        return reply.code(401).send('invalid')
-      }
-
-      // Assinatura válida não basta: logout e expiração vivem na tabela.
-      const session = await sessions().findOne({
-        where: { id: payload.jti, revokedAt: IsNull(), expiresAt: MoreThan(new Date()) },
-        relations: { account: true },
+      const found = await playTickets().findOne({
+        where: { ticket: token, expiresAt: MoreThan(new Date()) },
+        relations: { session: { account: true } },
       })
 
-      if (!session) {
+      // Ticket válido não basta: a sessão que o gerou precisa continuar viva.
+      // É isto que faz o logout expulsar de dentro do jogo.
+      if (
+        !found ||
+        found.session.revokedAt !== null ||
+        found.session.expiresAt <= new Date()
+      ) {
         return reply.code(401).send('invalid')
       }
 
-      // Resposta em texto puro e de uma linha só: o Pascal lê a resposta inteira
-      // como string, sem parser de JSON. Formato: "ok <nickname>".
-      return reply.send(`ok ${session.account.nickname}`)
+      // Registrado para auditoria; não invalida, porque reconectar depois de uma
+      // queda reenvia o mesmo ticket.
+      await playTickets().update({ ticket: token }, { lastUsedAt: new Date() })
+
+      return reply.send(`ok ${found.session.account.nickname}`)
     },
   )
 }

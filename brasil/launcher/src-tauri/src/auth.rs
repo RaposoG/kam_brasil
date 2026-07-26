@@ -154,6 +154,33 @@ impl ApiClient {
             .map_err(|e| format!("resposta inesperada do servidor: {e}"))
     }
 
+    /// Troca a sessão por um ticket de partida — credencial curta e de escopo
+    /// restrito, que e a unica coisa que o jogo chega a ver.
+    pub async fn play_ticket(&self, token: &str) -> Result<String, String> {
+        #[derive(Deserialize)]
+        struct TicketResponse {
+            ticket: String,
+        }
+
+        let response = self
+            .client
+            .post(self.url("/auth/ticket"))
+            .bearer_auth(token)
+            .send()
+            .await
+            .map_err(|e| format!("não foi possível falar com o servidor: {e}"))?;
+
+        if !response.status().is_success() {
+            return Err(Self::error_message(response).await);
+        }
+
+        response
+            .json::<TicketResponse>()
+            .await
+            .map(|r| r.ticket)
+            .map_err(|e| format!("resposta inesperada do servidor: {e}"))
+    }
+
     pub async fn logout(&self, token: &str) -> Result<(), String> {
         self.client
             .post(self.url("/auth/logout"))
@@ -205,6 +232,18 @@ impl AppState {
 
     pub fn api_base(&self) -> String {
         self.api.base().to_string()
+    }
+
+    /// Ticket de partida para entregar ao jogo. Visível ao módulo `game`.
+    pub(crate) async fn play_ticket(&self) -> Option<String> {
+        let token = self.token()?;
+        match self.api.play_ticket(&token).await {
+            Ok(ticket) => Some(ticket),
+            Err(e) => {
+                eprintln!("aviso: não foi possível obter o ticket de partida: {e}");
+                None
+            }
+        }
     }
 }
 
@@ -343,9 +382,35 @@ mod tests {
         let me = api.me(&session.token).await.expect("me deveria responder");
         assert_eq!(me.as_ref().map(|a| a.nickname.as_str()), Some(nickname.as_str()));
 
+        // Ticket de partida: credencial curta que o jogo recebe no lugar da sessao.
+        let ticket = api
+            .play_ticket(&session.token)
+            .await
+            .expect("deveria emitir ticket");
+        assert_ne!(ticket, session.token, "o ticket nao pode ser o proprio token");
+
+        let verify = |t: String| async move {
+            reqwest::get(format!("http://localhost:3000/auth/verify?token={t}"))
+                .await
+                .unwrap()
+                .text()
+                .await
+                .unwrap()
+        };
+
+        assert_eq!(verify(ticket.clone()).await, format!("ok {nickname}"));
+
+        // O token de sessao NAO deve servir como ticket -- se servisse, o escopo
+        // restrito seria so aparencia.
+        assert_eq!(verify(session.token.clone()).await, "invalid");
+
         api.logout(&session.token).await.expect("logout deveria funcionar");
 
         let after = api.me(&session.token).await.expect("me deveria responder");
         assert!(after.is_none(), "token deveria estar revogado apos o logout");
+
+        // E o ticket morre junto com a sessao: e isso que faz o logout expulsar
+        // de dentro do jogo, e nao apenas do launcher.
+        assert_eq!(verify(ticket).await, "invalid", "ticket deveria morrer com a sessao");
     }
 }
