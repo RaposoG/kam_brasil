@@ -11,8 +11,11 @@ const
     //lgsNone
     [],
     //lgsConnecting
+    // kam_brasil: mkAuthNickname chega aqui, entre a validacao do token e a
+    // resposta do join. Sem estar nesta lista o cliente descarta em silencio.
     [mkRefuseToJoin, mkIndexOnServer, mkNetProtocolVersion, mkWelcomeMessage, mkPing,
-     mkConnectedToRoom, mkPingFpsInfo, mkKicked, mkServerName, mkReqPassword],
+     mkConnectedToRoom, mkPingFpsInfo, mkKicked, mkServerName, mkReqPassword,
+     mkAuthNickname],
     //lgsQuery
     [mkAllowToJoin, mkRefuseToJoin, mkAuthChallenge, mkPing, mkPingFpsInfo, mkKicked],
     //lgsLobby
@@ -29,8 +32,11 @@ const
      mkCommands, mkTextChat, mkResyncFromTick, mkAskToReconnect, mkKicked, mkClientReconnected, mkTextTranslated, mkVote,
      mkAskToSendCrashreport],
     //lgsReconnecting
+    // kam_brasil: mkAuthNickname tambem aqui -- o cliente reenvia o token ao
+    // reconectar, entao o servidor responde com o nickname de novo.
     [mkIndexOnServer, mkNetProtocolVersion, mkWelcomeMessage, mkPing, {mkFPS, }mkConnectedToRoom,
-     mkPingFpsInfo, mkPlayersList, mkReconnectionAccepted, mkRefuseReconnect, mkKicked]
+     mkPingFpsInfo, mkPlayersList, mkReconnectionAccepted, mkRefuseReconnect, mkKicked,
+     mkAuthNickname]
   );
 
   JOIN_TIMEOUT = 8000; //8 sec. Timeout for join queries
