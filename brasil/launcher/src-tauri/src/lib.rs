@@ -1,5 +1,6 @@
 mod auth;
 mod game;
+mod original;
 
 use auth::AppState;
 
@@ -18,6 +19,8 @@ pub fn run() {
             game::check_update,
             game::install_update,
             game::launch_game,
+            original::find_original_game,
+            original::check_original_game,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
