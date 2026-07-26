@@ -1,0 +1,25 @@
+{
+  "name": "@kambrasil/launcher",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Launcher do Kam Brasil — login, atualização automática e lançamento do jogo",
+  "scripts": {
+    "dev": "vite",
+    "build": "vue-tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "tauri": "tauri"
+  },
+  "dependencies": {
+    "@tauri-apps/api": "^2.11.1",
+    "@tauri-apps/plugin-opener": "^2.5.4",
+    "vue": "^3.5.40"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.11.4",
+    "@vitejs/plugin-vue": "^6.0.8",
+    "typescript": "^5.9.3",
+    "vite": "^8.1.5",
+    "vue-tsc": "^3.3.8"
+  }
+}
