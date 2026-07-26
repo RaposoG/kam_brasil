@@ -32,7 +32,19 @@ const
 const
   // Anything that is a debug mechanism not intended for the Release whould be listed here, so that we know at a glance what kind of build we are having
   GAME_VERSION_POSTFIX = ''
-    {$IFDEF DBG_SKIP_SECURE_AUTH} + ' [UNSECURE]' {$ENDIF}
+    // kam_brasil: o rotulo [UNSECURE] foi removido daqui -- o DEFINE continua
+    // ligado, e obrigatoriamente.
+    //
+    // DBG_SKIP_SECURE_AUTH troca KM_NetAuthSecure por KM_NetAuthUnsecure. O
+    // arquivo seguro nao esta no repositorio publico do upstream (e mantido
+    // privado de proposito), entao TODA build feita a partir do codigo aberto
+    // carrega esse rotulo -- nao ha como desliga-lo compilando.
+    //
+    // O que ele significa: falta o desafio/resposta que prova que o par e um
+    // cliente genuino. NAO significa "sem autenticacao": nesta fork quem entra
+    // apresenta um token de conta emitido pela nossa API, e o servidor impoe o
+    // nickname da conta (ver KM_KamBrasilAuth e KM_NetServer.AuthNicknameAllowed).
+    // Mostrar "[UNSECURE]" ao jogador sugeriria o oposto do que acontece.
     {$IFDEF DEBUG} + ' [DEBUG]' {$ENDIF}
     {$IFDEF WDC64} + ' [x64]' {$ENDIF}
     {$IFDEF DBG_RNG_SPY} + ' [RNGSPY]' {$ENDIF}

@@ -74,17 +74,32 @@
 {$DEFINE DBG_SKIP_SECURE_AUTH}
 
 // Enable perflog (should be disabled for release / release candidate versions)
-{$DEFINE DBG_PERFLOG}
+//
+// kam_brasil: virou opt-in. O upstream ja dizia que deveria ficar desligado em
+// release, e sao 128 pontos de instrumentacao dentro de loops de IA e render.
+// Para investigar performance, compile com -dPERFLOG.
+{$IFDEF PERFLOG}
+  {$DEFINE DBG_PERFLOG}
+{$ENDIF}
 
 // Enable asynchronous game resource loading
 {$IFNDEF NO_ASYNC_LOAD}
   {$DEFINE LOAD_GAME_RES_ASYNC}
 {$ENDIF}
 
-// Permite desligar via -dNO_RNG_SPY. Necessario para o servidor dedicado com FPC:
-// KM_CommonUtils puxa KM_RandomChecks sob este define, e KM_RandomChecks usa
-// KM_GameSettings, que tem inline vars (Delphi 10.3+) que o FPC nao compila.
-{$IFNDEF NO_RNG_SPY}
+// Rastreamento de RNG para depurar desync: rotula cada chamada de KaMRandom com
+// o nome de quem a fez. Sao 168 pontos, em caminhos quentes.
+//
+// kam_brasil: virou opt-in (-dRNG_SPY). Antes era o contrario, e o servidor
+// dedicado precisava de -dNO_RNG_SPY para compilar com FPC -- KM_CommonUtils
+// puxa KM_RandomChecks sob este define, que usa KM_GameSettings, cheio de
+// inline vars do Delphi 10.3+ que o FPC nao entende. Desligado por padrao, o
+// servidor compila sem flag nenhuma.
+//
+// Ligue quando for investigar um desync -- coisa provavel aqui, porque
+// ALLOW_MP_MODS permite clientes com .dat divergentes (ver
+// Docs/kam_brasil-local-changes.md).
+{$IFDEF RNG_SPY}
   {$DEFINE DBG_RNG_SPY}
 {$ENDIF}
 
