@@ -1,0 +1,25 @@
+{
+  "compilerOptions": {
+    "target": "ESNext",
+    "lib": ["ESNext"],
+    "module": "Preserve",
+    "moduleResolution": "bundler",
+    "types": ["bun"],
+    // Bun resolve imports com extensao .ts explicita; exige noEmit (temos abaixo)
+    "allowImportingTsExtensions": true,
+
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "noImplicitOverride": true,
+
+    // TypeORM depende dos decorators legados + metadata em runtime
+    "experimentalDecorators": true,
+    "emitDecoratorMetadata": true,
+
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "noEmit": true
+  },
+  "include": ["src/**/*.ts"]
+}

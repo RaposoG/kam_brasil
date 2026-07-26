@@ -103,3 +103,16 @@ Modding graphics/*.txt
 KaM_Remake_exe.aqt
 
 SavesCMP/
+
+# ---------------------------------------------------------------------------
+# Kam Brasil — plataforma online (brasil/)
+# ---------------------------------------------------------------------------
+/brasil/**/node_modules/
+/brasil/**/dist/
+/brasil/.env
+/brasil/**/.env
+!/brasil/.env.example
+# Build artifacts do Rust/Tauri
+/brasil/launcher/src-tauri/target/
+/brasil/launcher/src-tauri/gen/
+# A regra global "*.log" acima ja cobre logs do bun/npm
