@@ -150,7 +150,17 @@ var
   DEBUG_SPEEDUP_SPEED     :Integer = 300;   //Speed for speedup from debug menu
   DEBUG_LOGS              :Boolean = True;  //Log debug info
   DEBUG_SCRIPTING_EXEC    :Boolean = False; //Use slow debug executor (about 3 times slower! never use on release version). Using it we can find exact position of execution time error (row/col/pos/module)
-  USE_KMR_DIR_FOR_SETTINGS:Boolean = DEBUG_CFG; // Do we use KMR local directory for settings?
+  // kam_brasil: True, nao DEBUG_CFG. A instalacao tem que ser autocontida.
+  //
+  // Com False, as configuracoes vao para Documentos\My Games\Knights and
+  // Merchants Remake -- uma pasta COMPARTILHADA por todas as instalacoes de KaM
+  // Remake do usuario. O launcher escreve o master server ali, e isso sequestrava
+  // o KaM oficial de quem tinha os dois instalados: a lista de multiplayer dele
+  // passava a mostrar so os nossos servidores, para sempre.
+  //
+  // True faz esta build ler e gravar na propria pasta. Efeito colateral aceito:
+  // quem ja jogava perde as preferencias que estavam no Documentos, uma vez.
+  USE_KMR_DIR_FOR_SETTINGS:Boolean = True;
   SKIP_RNG_CHECKS_FOR_SOME_GIC: Boolean = True; //Skip rng checks for Autosave and few other commands to have same AI city with predefined seed + mapconfig
   ALLOW_SELECT_ALLIES     :Boolean = True;  //Do we allow to select ally units or groups
   ALLOW_SELECT_ALL        :Boolean = DEBUG_CFG; //Do we allow to select all entities (allies and enemies)
