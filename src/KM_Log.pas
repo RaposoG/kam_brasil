@@ -306,7 +306,10 @@ begin
       raise E;
     end;
   end;
-  AddLineTime('Log is up and running. Game version: ' + UnicodeString(GAME_VERSION));
+  // A revisao da engine sai junto: e ela que manda em compatibilidade de save e
+  // replay, entao um relato de bug sem ela obriga a adivinhar.
+  AddLineTime('Log is up and running. Game version: ' + UnicodeString(GAME_VERSION)
+              + ' (engine ' + UnicodeString(GAME_REVISION) + ')');
 end;
 
 

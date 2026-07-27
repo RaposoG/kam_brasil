@@ -28,6 +28,7 @@ const
   // However for some odd reason this kills Reys IDE ..
   {$I KM_Revision.inc};
   {$I KM_NetProtocolRevision.inc};
+  {$I KM_BrasilVersion.inc};
 
 const
   // Anything that is a debug mechanism not intended for the Release whould be listed here, so that we know at a glance what kind of build we are having
@@ -1142,7 +1143,14 @@ uses
 initialization
 begin
   GAME_REVISION := AnsiString('r' + IntToStr(GAME_REVISION_NUM));
-  GAME_VERSION := GAME_VERSION_PREFIX + GAME_REVISION + GAME_VERSION_POSTFIX + GAME_VERSION_POSTFIX2;
+
+  // kam_brasil: mostramos a nossa versao, nao a revisao do upstream. "r16155"
+  // nao diz nada para o jogador e nao corresponde a nada que ele baixou.
+  //
+  // GAME_REVISION continua existindo e mandando onde importa de verdade --
+  // compatibilidade de save e replay --, so nao aparece mais na tela.
+  GAME_VERSION := GAME_VERSION_PREFIX + AnsiString('Kam Brasil ' + KAM_BRASIL_VERSION)
+                  + GAME_VERSION_POSTFIX + GAME_VERSION_POSTFIX2;
   //Clients of this net protocol version may connect to the dedicated server
   NET_PROTOCOL_REVISON := AnsiString('r' + IntToStr(NET_PROTOCOL_REVISION_NUM));
 end;
