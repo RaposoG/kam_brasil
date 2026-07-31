@@ -46,14 +46,17 @@ type
     procedure RefreshTestList;
     function IsStopped: Boolean;
     procedure HandleProgress(const aValue: string);
-    procedure EnsureResourcesLoaded;
+    procedure EnsureResourcesLoaded(aHeadless: Boolean);
     procedure RefreshTagList;
     procedure RunTest(aClass: TKMTestClass; aSeed: Integer);
+  public
+    function RunFromCmdLine: Boolean;
   end;
 
 
 implementation
 uses
+  StrUtils,
   KM_GameTypes, KM_Defaults,
   KM_MainSettings, KM_GameSettings, KM_GameAppSettings;
 
@@ -188,7 +191,7 @@ end;
 
 procedure TForm2.RunTest(aClass: TKMTestClass; aSeed: Integer);
 begin
-  EnsureResourcesLoaded;
+  EnsureResourcesLoaded(False);
 
   fStopped := False;
 
@@ -283,26 +286,165 @@ begin
 end;
 
 
-procedure TForm2.EnsureResourcesLoaded;
+procedure TForm2.EnsureResourcesLoaded(aHeadless: Boolean);
 var
   tgtWidth, tgtHeight: Word;
+  renderArea: TKMRenderControl;
 begin
   if gGameApp <> nil then Exit;
 
-  if fRenderArea = nil then
+  // Headless mode needs no OpenGL context and no window, hence the app could be run from the command line.
+  // SKIP_RENDER must be set before the resources are loaded, it also skips loading of the sprites
+  if aHeadless then
+  begin
+    SKIP_RENDER := True;
+    renderArea := nil;
+  end
+  else
+    renderArea := fRenderArea;
+
+  if renderArea = nil then
   begin
     tgtWidth := 1024;
     tgtHeight := 768;
   end else
   begin
-    tgtWidth := fRenderArea.Width;
-    tgtHeight := fRenderArea.Height;
+    tgtWidth := renderArea.Width;
+    tgtHeight := renderArea.Height;
   end;
 
-  gGameApp := TKMGameApp.Create(fRenderArea, tgtWidth, tgtHeight, False, nil, nil, nil, True);
+  gGameApp := TKMGameApp.Create(renderArea, tgtWidth, tgtHeight, False, nil, nil, nil, True);
   gGameSettings.Autosave := False;
   gGameSettings.SaveCheckpoints := False;
   gGameApp.PreloadGameResources;
+end;
+
+
+// Batch mode, allows to run tests without any user interaction:
+//   Testing_GameTests.exe --run-all [--seed=N] [--cycles=N] [--windowed] [--out=<file>]
+//   Testing_GameTests.exe --run=Recruit
+// --run filter is a case insensitive substring of the test class name.
+// Results are written into the --out file,
+// ExitCode:
+//   0 - everything passed
+//   1 - some tests failed
+//   2 - no test matched the filter
+// Returns False when there were no known switches, then the app should just show its window as usual
+function TForm2.RunFromCmdLine: Boolean;
+
+  function ValueOf(const aPrefix, aParameter: string): string;
+  begin
+    Result := Copy(aParameter, Length(aPrefix) + 1, MaxInt);
+  end;
+
+const
+  PARAM_RUN_ALL     = '--run-all';
+  PARAM_RUN         = '--run=';
+  PARAM_SEED        = '--seed=';
+  PARAM_CYCLES      = '--cycles=';
+  PARAM_OUT         = '--out=';
+  PARAM_SHOW_WINDOW = '--show-window';
+begin
+  Result := False;
+
+  var paramFilter := '';
+  var paramSeed := seSeed.Value;
+  var paramCycles := 1;
+  var paramHeadless := True;
+  var paramOutFile := ChangeFileExt(ParamStr(0), '_results.log');
+
+  for var I := 1 to ParamCount do
+  begin
+    var param := ParamStr(I);
+
+    if SameText(param, PARAM_RUN_ALL) then
+      Result := True
+    else
+    if StartsText(PARAM_RUN, param) then
+    begin
+      paramFilter := ValueOf(PARAM_RUN, param);
+      if paramFilter <> '' then // An empty value is most likely a missing argument, not "run everything"
+        Result := True;
+    end
+    else
+    if StartsText(PARAM_SEED, param) then
+      paramSeed := StrToIntDef(ValueOf(PARAM_SEED, param), paramSeed)
+    else
+    if StartsText(PARAM_CYCLES, param) then
+      paramCycles := Max(1, StrToIntDef(ValueOf(PARAM_CYCLES, param), paramCycles))
+    else
+    if StartsText(PARAM_OUT, param) then
+      paramOutFile := ValueOf(PARAM_OUT, param)
+    else
+    if SameText(param, PARAM_SHOW_WINDOW) then
+      paramHeadless := False;
+  end;
+
+  if not Result then Exit;
+
+  if not paramHeadless then
+    Show; // Render control needs a window to create its OpenGL context
+
+  var sw := TStreamWriter.Create(paramOutFile);
+  try
+    try
+      EnsureResourcesLoaded(paramHeadless);
+
+      var ranCnt := 0;
+      var failedCnt := 0;
+      for var C := 0 to paramCycles - 1 do
+        for var I := 0 to High(gTestList) do
+        begin
+          if (paramFilter <> '') and (Pos(LowerCase(paramFilter), LowerCase(gTestList[I].ClassName)) = 0) then Continue;
+
+          // TKMTest.Run does not guard its SetUp, hence one broken test should not kill the whole batch
+          try
+            RunTest(gTestList[I], paramSeed + C);
+          except
+            on E: Exception do
+            begin
+              fResults.TestResult := trException;
+              fResults.TestMessage := E.ClassName + ': ' + E.Message;
+
+              // SetUp may have raised before TKMTest.Run reached its own try/finally (Run does not
+              // guard SetUp), so TearDown never ran - the game could still be half-started, which
+              // would poison every remaining test's SetUp. Clean it up here as a last resort
+              if (gGameApp <> nil) and (gGameApp.Game <> nil) then
+                gGameApp.StopGame(grSilent);
+            end;
+          end;
+          Inc(ranCnt);
+
+          case fResults.TestResult of
+            trSuccess:    sw.WriteLine(Format('%-40s SUCCESS      seed %d', [gTestList[I].ClassName, paramSeed + C]));
+            trFailed:     sw.WriteLine(Format('%-40s FAILED       seed %d: %s', [gTestList[I].ClassName, paramSeed + C, fResults.TestMessage]));
+            trException:  sw.WriteLine(Format('%-40s EXCEPTION    seed %d: %s', [gTestList[I].ClassName, paramSeed + C, fResults.TestMessage]));
+          end;
+
+          if fResults.TestResult <> trSuccess then
+            Inc(failedCnt);
+        end;
+
+        if ranCnt = 0 then
+        begin
+          sw.WriteLine(Format('No tests matched filter "%s"', [paramFilter]));
+          ExitCode := 2;
+        end
+        else
+        begin
+          sw.WriteLine(Format('Tests run: %d, failed: %d', [ranCnt, failedCnt]));
+          ExitCode := Ord(failedCnt > 0);
+        end;
+    except
+      on E: Exception do
+      begin
+        sw.WriteLine('EXCEPTION before tests could complete: %s: %s', [E.ClassName, E.Message]);
+        ExitCode := 3;
+      end;
+    end;
+  finally
+    sw.Free;
+  end;
 end;
 
 
