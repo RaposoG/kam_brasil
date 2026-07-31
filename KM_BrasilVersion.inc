@@ -10,4 +10,7 @@
 // com o mesmo numero. Se voce publicar uma versao que so muda conteudo (mapas,
 // textos) sem rebuildar, o executavel vai continuar dizendo o numero anterior
 // -- o que e verdade, porque o binario nao mudou.
-KAM_BRASIL_VERSION = '1.0.5';
+// Sem ponto-e-virgula no fim: ele vem depois do {$I ...} em KM_Defaults.pas,
+// como nos .inc de revisao do upstream. Com um aqui, a declaracao fecha duas
+// vezes e o Delphi para em "Declaration expected but ';' found".
+KAM_BRASIL_VERSION = '1.0.5'
