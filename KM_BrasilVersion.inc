@@ -10,4 +10,4 @@
 // com o mesmo numero. Se voce publicar uma versao que so muda conteudo (mapas,
 // textos) sem rebuildar, o executavel vai continuar dizendo o numero anterior
 // -- o que e verdade, porque o binario nao mudou.
-KAM_BRASIL_VERSION = '1.0.4';
+KAM_BRASIL_VERSION = '1.0.5';
