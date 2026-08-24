@@ -80,6 +80,8 @@
         <DCCReference Include="..\..\src\settings\KM_Settings.pas"/>
         <DCCReference Include="..\..\src\settings\KM_ServerSettings.pas"/>
         <DCCReference Include="..\..\src\net\KM_NetTypes.pas"/>
+        <DCCReference Include="..\..\src\net\KM_NetRoom.pas"/>
+        <DCCReference Include="..\..\src\net\KM_NetRanked.pas"/>
         <DCCReference Include="..\..\src\net\KM_NetDedicatedServer.pas"/>
         <DCCReference Include="..\..\src\utils\KM_ConsoleTimer.pas"/>
         <DCCReference Include="KM_ServerEventHandler.pas"/>

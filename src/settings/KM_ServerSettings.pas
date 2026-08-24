@@ -43,6 +43,11 @@ type
     fRequireAuth: Boolean;
     fAuthVerifyUrl: string;
 
+    // kam_brasil: rotas internas de sala ranqueada. URL base vazia desliga o
+    // recurso inteiro -- um servidor comum nunca fala com a fila.
+    fRankedUrl: string;
+    fRankedSecret: string;
+
     // Server
     procedure SetMasterServerAddress(const aValue: string);
     procedure SetServerName(const aValue: AnsiString);
@@ -79,6 +84,8 @@ type
     // kam_brasil
     property RequireAuth: Boolean read fRequireAuth;
     property AuthVerifyUrl: string read fAuthVerifyUrl;
+    property RankedUrl: string read fRankedUrl;
+    property RankedSecret: string read fRankedSecret;
     property AnnounceServer: Boolean read fAnnounceServer write SetAnnounceServer;
     property MaxRooms: Integer read fMaxRooms write SetMaxRooms;
     property ServerPacketsAccumulatingDelay: Integer read fServerPacketsAccumulatingDelay write SetServerPacketsAccumulatingDelay;
@@ -180,6 +187,8 @@ begin
     // antes de os clientes saberem envia-lo deixaria a comunidade sem jogar.
     fRequireAuth            := ini.ReadBool  ('Server', 'KamBrasilRequireAuth', False);
     fAuthVerifyUrl          := ini.ReadString('Server', 'KamBrasilAuthVerifyUrl', 'http://127.0.0.1:3000/auth/verify');
+    fRankedUrl              := ini.ReadString('Server', 'KamBrasilRankedUrl', '');
+    fRankedSecret           := ini.ReadString('Server', 'KamBrasilRankedSecret', '');
 
     fServerDynamicFOW       := ini.ReadBool  ('Server', 'DynamicFOW', False);
     fServerMapsRosterEnabled:= ini.ReadBool  ('Server', 'MapsRosterEnabled', False);
@@ -233,6 +242,8 @@ begin
     // kam_brasil
     ini.WriteBool   ('Server','KamBrasilRequireAuth',   fRequireAuth);
     ini.WriteString ('Server','KamBrasilAuthVerifyUrl', fAuthVerifyUrl);
+    ini.WriteString ('Server','KamBrasilRankedUrl',      fRankedUrl);
+    ini.WriteString ('Server','KamBrasilRankedSecret',   fRankedSecret);
 
     ini.WriteBool   ('Server','DynamicFOW',             fServerDynamicFOW);
     ini.WriteBool   ('Server','MapsRosterEnabled',      fServerMapsRosterEnabled);

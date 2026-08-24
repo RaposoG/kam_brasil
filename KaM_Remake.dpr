@@ -294,6 +294,7 @@ uses
   KM_NetFileTransfer in 'src\net\KM_NetFileTransfer.pas',
   KM_NetGameInfo in 'src\net\KM_NetGameInfo.pas',
   KM_NetServerLocator in 'src\net\KM_NetServerLocator.pas',
+  KM_NetRanked in 'src\net\KM_NetRanked.pas',
   KM_NetRoom in 'src\net\KM_NetRoom.pas',
   KM_NetServer in 'src\net\KM_NetServer.pas',
   {$IFDEF WDC} KM_NetServerOverbyte in 'src\net\KM_NetServerOverbyte.pas', {$ENDIF}

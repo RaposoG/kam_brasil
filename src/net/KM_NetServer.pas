@@ -9,6 +9,9 @@ uses
   KM_CommonClasses, KM_NetGameInfo, KM_NetTypes,
   KM_Defaults, KM_CommonUtils, KM_CommonTypes,
   KM_HTTPClient, // kam_brasil: validacao de token contra a nossa API
+  KM_GameOptions, // kam_brasil: para conferir o mkGameOptions do host
+  KM_NetRanked,   // kam_brasil: reservas de sala ranqueada
+  KM_NetRoom,     // kam_brasil: monta/le o mkPlayersList sem a simulacao (NET_ROOM_HEADLESS)
   {$IFDEF WDC}
     {$IFDEF CONSOLE}
       KM_ConsoleTimer
@@ -46,6 +49,16 @@ uses
 }
 
 type
+  // kam_brasil: o que a fila HTTP esta atendendo agora. Existe porque
+  // TKMHTTPClient tem um unico par OnReceive/OnError -- sem o tipo do pedido em
+  // curso a resposta chegaria sem dono.
+  TKMHttpReqKind = (
+    hrkNone,          // ocioso
+    hrkAuth,          // GET /auth/verify -- resposta define quem e o cliente
+    hrkRankedRooms,   // GET /internal/ranked/rooms -- resposta traz as reservas
+    hrkRankedNotify   // /started e /report -- resposta so interessa para o log
+  );
+
   TKMServerClient = class
   private
     fHandle: TKMNetHandleIndex;
@@ -141,30 +154,54 @@ type
                          GameInfo: TKMNetGameInfo;
                        end;
 
-    // kam_brasil: autenticacao de jogadores contra a API.
+    // kam_brasil: conversa com a nossa API -- autenticacao de jogadores e
+    // reservas de sala ranqueada.
     //
     // TKMHTTPClient atende UMA requisicao por vez (o wrapper chama Abort a cada
-    // GetURL novo), entao validacoes precisam ser serializadas numa fila em vez
-    // de disparadas em paralelo -- senao dois jogadores entrando juntos se
-    // atropelariam e um deles seria recusado sem motivo.
+    // GetURL novo), entao tudo passa por uma fila em vez de ser disparado em
+    // paralelo -- senao dois jogadores entrando juntos se atropelariam e um
+    // deles seria recusado sem motivo.
     fAuthRequire: Boolean;
     fAuthVerifyUrl: string;
-    fAuthHTTP: TKMHTTPClient;
-    fAuthBusyHandle: TKMNetHandleIndex; // NET_ADDRESS_EMPTY = ocioso
-    fAuthQueue: array of record
+    fHTTP: TKMHTTPClient;
+    fHttpBusyKind: TKMHttpReqKind;      // hrkNone = ocioso
+    fHttpBusyHandle: TKMNetHandleIndex; // so vale para hrkAuth
+    fHttpBusyUrl: string;               // guardada so para aparecer no log de erro
+    fHttpQueue: array of record
+                          Kind: TKMHttpReqKind;
                           Handle: TKMNetHandleIndex;
-                          Token: AnsiString;
+                          URL: string;
                         end;
-    fAuthQueueCount: Integer;
+    fHttpQueueCount: Integer;
+
+    // kam_brasil: salas ranqueadas. URL vazia = servidor comum, nada disto roda.
+    fRankedUrl: string;
+    fRankedSecret: string;
+    fRankedRooms: TKMRankedRooms;
+    fRankedLastPoll: Cardinal;
 
     fOnStatusMessage: TGetStrProc;
 
     // kam_brasil
-    procedure AuthEnqueue(aHandle: TKMNetHandleIndex; const aToken: AnsiString);
-    procedure AuthProcessQueue;
-    procedure AuthReceived(const aText: string);
-    procedure AuthError(const aText: string);
+    procedure HttpEnqueue(aKind: TKMHttpReqKind; aHandle: TKMNetHandleIndex; const aURL: string);
+    procedure HttpProcessQueue;
+    procedure HttpReceived(const aText: string);
+    procedure HttpError(const aText: string);
+    procedure AuthCompleted(aHandle: TKMNetHandleIndex; const aResponse: string);
     function AuthNicknameAllowed(aHandle: TKMNetHandleIndex; aPacket: PByte; aLength: Word): Boolean;
+
+    // kam_brasil: ranqueada
+    function RankedEnabled: Boolean;
+    procedure RankedUpdate;
+    procedure RankedRoomsReceived(const aText: string);
+    procedure RankedImpose(aRoom: Integer);
+    procedure RankedBindRoom(aRanked: TKMRankedRoom);
+    procedure RankedObserveGameInfo(aRoom: Integer);
+    procedure RankedClientGone(aHandle: TKMNetHandleIndex; aRoom: Integer);
+    procedure RankedReport(aRanked: TKMRankedRoom; const aReason: string);
+    function RankedBlocked(aRoom: Integer; const aWhat: string): Boolean;
+    function RankedListMatches(aRanked: TKMRankedRoom; aNetRoom: TKMNetRoom): Boolean;
+    function RankedRelayAllowed(aHandle: TKMNetHandleIndex; aRoom: Integer; aPacket: PByte; aLength: Word): Boolean;
 
     procedure Error(const aText: string);
     procedure Status(const aText: string);
@@ -203,6 +240,7 @@ type
     procedure ClearClients;
     // kam_brasil: configurado depois do Create, como o GameFilter ja e.
     procedure SetAuth(aRequire: Boolean; const aVerifyUrl: string);
+    procedure SetRanked(const aBaseUrl, aSecret: string);
     procedure MeasurePings;
     procedure UpdateStateIdle;
     procedure UpdateState(Sender: TObject);
@@ -217,8 +255,9 @@ type
 
 
 implementation
-//uses
-  //TypInfo, KM_Log;
+uses
+  //KM_Log,
+  TypInfo;  // kam_brasil: nome do pacote no log de sala ranqueada
 
 const
   //Server needs to use some text constants locally but can't know about gResTexts
@@ -354,11 +393,14 @@ begin
 
   // kam_brasil
   fAuthRequire := False;
-  fAuthQueueCount := 0;
-  fAuthBusyHandle := NET_ADDRESS_EMPTY;
-  fAuthHTTP := TKMHTTPClient.Create;
-  fAuthHTTP.OnReceive := AuthReceived;
-  fAuthHTTP.OnError := AuthError;
+  fHttpQueueCount := 0;
+  fHttpBusyKind := hrkNone;
+  fHttpBusyHandle := NET_ADDRESS_EMPTY;
+  fHTTP := TKMHTTPClient.Create;
+  fHTTP.OnReceive := HttpReceived;
+  fHTTP.OnError := HttpError;
+  fRankedRooms := TKMRankedRooms.Create;
+  fRankedLastPoll := 0;
 
   {$IFDEF WDC}
     {$IFDEF CONSOLE}
@@ -388,7 +430,8 @@ begin
   fEmptyGameInfo.Free;
   FreeAndNil(fTimer);
   FreeAndNil(fGameFilter);
-  FreeAndNil(fAuthHTTP); // kam_brasil
+  FreeAndNil(fHTTP);        // kam_brasil
+  FreeAndNil(fRankedRooms); // kam_brasil
 
   inherited;
 end;
@@ -404,54 +447,75 @@ begin
 end;
 
 
-procedure TKMNetServer.AuthEnqueue(aHandle: TKMNetHandleIndex; const aToken: AnsiString);
-var
-  I: Integer;
+procedure TKMNetServer.SetRanked(const aBaseUrl, aSecret: string);
 begin
-  // Um token por cliente: reenviar substitui o pedido pendente em vez de
-  // acumular, senao um cliente malicioso encheria a fila sozinho.
-  for I := 0 to fAuthQueueCount - 1 do
-    if fAuthQueue[I].Handle = aHandle then
-    begin
-      fAuthQueue[I].Token := aToken;
-      Exit;
-    end;
-
-  if fAuthQueueCount >= Length(fAuthQueue) then
-    SetLength(fAuthQueue, fAuthQueueCount + 8);
-
-  fAuthQueue[fAuthQueueCount].Handle := aHandle;
-  fAuthQueue[fAuthQueueCount].Token := aToken;
-  Inc(fAuthQueueCount);
+  // Mesma razao do SetAuth: configurado antes de o socket abrir, quando o
+  // handler de log ainda nao existe. O estado e logado no StartListening.
+  fRankedUrl := aBaseUrl;
+  fRankedSecret := aSecret;
 end;
 
 
-procedure TKMNetServer.AuthProcessQueue;
+function TKMNetServer.RankedEnabled: Boolean;
+begin
+  Result := fRankedUrl <> '';
+end;
+
+
+procedure TKMNetServer.HttpEnqueue(aKind: TKMHttpReqKind; aHandle: TKMNetHandleIndex; const aURL: string);
 var
   I: Integer;
-  handle: TKMNetHandleIndex;
-  token: AnsiString;
 begin
-  if not fAuthRequire then Exit;
-  if fAuthBusyHandle <> NET_ADDRESS_EMPTY then Exit; // ja tem uma validacao em curso
-  if fAuthQueueCount = 0 then Exit;
+  // Um pedido por cliente (auth) e um polling de reservas por vez: reenviar
+  // substitui o pendente em vez de acumular, senao um cliente malicioso -- ou
+  // uma API lenta -- encheria a fila sozinho.
+  if aKind in [hrkAuth, hrkRankedRooms] then
+    for I := 0 to fHttpQueueCount - 1 do
+      if (fHttpQueue[I].Kind = aKind) and (fHttpQueue[I].Handle = aHandle) then
+      begin
+        fHttpQueue[I].URL := aURL;
+        Exit;
+      end;
 
-  handle := fAuthQueue[0].Handle;
-  token := fAuthQueue[0].Token;
+  if fHttpQueueCount >= Length(fHttpQueue) then
+    SetLength(fHttpQueue, fHttpQueueCount + 8);
 
-  for I := 0 to fAuthQueueCount - 2 do
-    fAuthQueue[I] := fAuthQueue[I + 1];
-  Dec(fAuthQueueCount);
+  fHttpQueue[fHttpQueueCount].Kind := aKind;
+  fHttpQueue[fHttpQueueCount].Handle := aHandle;
+  fHttpQueue[fHttpQueueCount].URL := aURL;
+  Inc(fHttpQueueCount);
+end;
+
+
+procedure TKMNetServer.HttpProcessQueue;
+var
+  I: Integer;
+  kind: TKMHttpReqKind;
+  handle: TKMNetHandleIndex;
+  url: string;
+begin
+  if fHttpBusyKind <> hrkNone then Exit; // ja tem uma requisicao em curso
+  if fHttpQueueCount = 0 then Exit;
+
+  kind := fHttpQueue[0].Kind;
+  handle := fHttpQueue[0].Handle;
+  url := fHttpQueue[0].URL;
+
+  for I := 0 to fHttpQueueCount - 2 do
+    fHttpQueue[I] := fHttpQueue[I + 1];
+  Dec(fHttpQueueCount);
 
   // O cliente pode ter caido enquanto esperava na fila.
-  if not IsValidHandle(handle) then
+  if (kind = hrkAuth) and not IsValidHandle(handle) then
   begin
-    AuthProcessQueue; // segue para o proximo
+    HttpProcessQueue; // segue para o proximo
     Exit;
   end;
 
-  fAuthBusyHandle := handle;
-  fAuthHTTP.GetURL(fAuthVerifyUrl + '?token=' + UnicodeString(token), False);
+  fHttpBusyKind := kind;
+  fHttpBusyHandle := handle;
+  fHttpBusyUrl := url;
+  fHTTP.GetURL(url, False);
 end;
 
 
@@ -514,17 +578,81 @@ begin
 end;
 
 
-procedure TKMNetServer.AuthReceived(const aText: string);
+procedure TKMNetServer.HttpReceived(const aText: string);
 var
+  kind: TKMHttpReqKind;
   handle: TKMNetHandleIndex;
+begin
+  kind := fHttpBusyKind;
+  handle := fHttpBusyHandle;
+  fHttpBusyKind := hrkNone;
+  fHttpBusyHandle := NET_ADDRESS_EMPTY;
+
+  case kind of
+    hrkAuth:        AuthCompleted(handle, aText);
+    hrkRankedRooms: RankedRoomsReceived(aText);
+    // hrkRankedNotify: a API responde 'ok'. Nao ha decisao a tomar com isso --
+    // o reporte e idempotente por match, entao nem repeticao seria problema.
+  end;
+
+  HttpProcessQueue;
+end;
+
+
+procedure TKMNetServer.HttpError(const aText: string);
+var
+  kind: TKMHttpReqKind;
+  handle: TKMNetHandleIndex;
+  url: string;
+begin
+  kind := fHttpBusyKind;
+  handle := fHttpBusyHandle;
+
+  // StringReplace com padrao vazio e comportamento que muda entre compiladores.
+  url := fHttpBusyUrl;
+  if fRankedSecret <> '' then
+    url := StringReplace(url, fRankedSecret, '<secret>', [rfReplaceAll]);
+
+  fHttpBusyKind := hrkNone;
+  fHttpBusyHandle := NET_ADDRESS_EMPTY;
+
+  case kind of
+    hrkAuth:
+      begin
+        // API fora do ar derruba quem esta entrando. Preferimos isso a deixar
+        // entrar sem verificar: um servidor que ignora falha de autenticacao
+        // nao autentica.
+        Status('Auth request failed for client ' + IntToStr(handle) + ': ' + aText);
+        if IsValidHandle(handle) then
+        begin
+          PacketSend(handle, mkRefuseToJoin, TX_KB_NOT_AUTHENTICATED, True);
+          fServer.Kick(handle);
+        end;
+      end;
+  else
+    // Reservas: a proxima tentativa vem no polling seguinte, nao ha o que fazer.
+    //
+    // Reportes: a URL vai junto (sem o segredo) porque este e o unico momento em
+    // que um resultado pode se perder -- API reiniciando bem na hora em que a
+    // partida acabou. Com a linha no log, o dono refaz a chamada na mao.
+    //
+    // ponytail: sem retentativa automatica. Vale a pena quando aparecer o
+    // primeiro caso real -- a rota ja e idempotente por match, entao reenviar
+    // e seguro; o que falta e onde guardar a fila entre reinicios do servidor.
+    Status('Ranked request failed: ' + aText + ' -- ' + url);
+  end;
+
+  HttpProcessQueue;
+end;
+
+
+procedure TKMNetServer.AuthCompleted(aHandle: TKMNetHandleIndex; const aResponse: string);
+var
   client: TKMServerClient;
   response: string;
 begin
-  handle := fAuthBusyHandle;
-  fAuthBusyHandle := NET_ADDRESS_EMPTY;
-
-  response := Trim(aText);
-  client := fClientList.GetByHandle(handle);
+  response := Trim(aResponse);
+  client := fClientList.GetByHandle(aHandle);
 
   if client <> nil then
   begin
@@ -534,50 +662,500 @@ begin
     if Copy(response, 1, 3) = 'ok ' then
     begin
       client.AuthNickname := AnsiString(Trim(Copy(response, 4, Length(response))));
-      Status('Client ' + IntToStr(handle) + ' authenticated as ' + string(client.AuthNickname));
+      Status('Client ' + IntToStr(aHandle) + ' authenticated as ' + string(client.AuthNickname));
 
       // Informa ao cliente qual nome a conta dele possui. Vai ANTES da resposta
       // do join: assim, quando ele entrar na sala -- inclusive recebendo
       // direitos de host, caso em que se adiciona sozinho -- ja esta com o nome
       // certo. A ordem do TCP garante que chega primeiro.
-      PacketSendA(handle, mkAuthNickname, client.AuthNickname);
+      PacketSendA(aHandle, mkAuthNickname, client.AuthNickname);
 
       // Havia um mkJoinRoom esperando a validacao: atende agora.
       if client.JoinDeferred then
       begin
         client.JoinDeferred := False;
-        AddClientToRoom(handle, client.JoinRoom, client.JoinGameRev);
+        AddClientToRoom(aHandle, client.JoinRoom, client.JoinGameRev);
       end;
     end
     else
     begin
-      Status('Client ' + IntToStr(handle) + ' failed authentication');
-      PacketSend(handle, mkRefuseToJoin, TX_KB_NOT_AUTHENTICATED, True);
-      fServer.Kick(handle);
+      Status('Client ' + IntToStr(aHandle) + ' failed authentication');
+      PacketSend(aHandle, mkRefuseToJoin, TX_KB_NOT_AUTHENTICATED, True);
+      fServer.Kick(aHandle);
     end;
   end;
-
-  AuthProcessQueue;
 end;
 
 
-procedure TKMNetServer.AuthError(const aText: string);
-var
-  handle: TKMNetHandleIndex;
-begin
-  handle := fAuthBusyHandle;
-  fAuthBusyHandle := NET_ADDRESS_EMPTY;
+{ kam_brasil: salas ranqueadas }
 
-  // API fora do ar derruba quem esta entrando. Preferimos isso a deixar entrar
-  // sem verificar: um servidor que ignora falha de autenticacao nao autentica.
-  Status('Auth request failed for client ' + IntToStr(handle) + ': ' + aText);
-  if IsValidHandle(handle) then
+// Nada disto e chamado num servidor comum -- RankedEnabled e False e a lista de
+// reservas fica vazia, entao os testes de sala reservada saem no primeiro if.
+procedure TKMNetServer.RankedUpdate;
+var
+  I, slot: Integer;
+  ranked: TKMRankedRoom;
+begin
+  // fListening carrega o fRoomInfo: sem ele, criar sala para uma reserva
+  // escreveria num array que o StopListening acabou de liberar.
+  if not RankedEnabled or not fListening then Exit;
+
+  if TimeSince(fRankedLastPoll) >= RANKED_POLL_INTERVAL then
   begin
-    PacketSend(handle, mkRefuseToJoin, TX_KB_NOT_AUTHENTICATED, True);
-    fServer.Kick(handle);
+    fRankedLastPoll := TimeGet;
+    HttpEnqueue(hrkRankedRooms, NET_ADDRESS_EMPTY, fRankedUrl + '/rooms?secret=' + fRankedSecret);
   end;
 
-  AuthProcessQueue;
+  for I := fRankedRooms.Count - 1 downto 0 do
+  begin
+    ranked := fRankedRooms.Item(I);
+
+    // Sem partida em curso nao ha resultado a reportar: uma reserva que nunca
+    // virou jogo e cancelada pela API, nao por nos.
+    if ranked.Reported or not ranked.Live then Continue;
+
+    if ranked.ResultsComplete then
+    begin
+      RankedReport(ranked, 'resultado completo');
+      Continue;
+    end;
+
+    // Desconexao: a janela de 3 minutos e do servidor, nao do host. Quem nao
+    // voltou perde, e o time dele perde junto.
+    //
+    // A sala esvaziar nao e um caso a parte: quando o ultimo sai, os relogios
+    // de todos ja estao correndo e o primeiro a estourar reporta a partida.
+    // Reportar na hora tiraria a janela de reconexao de quem caiu junto.
+    slot := ranked.TimedOutSlot;
+    if slot <> -1 then
+    begin
+      ranked.LoseByAbandon(slot);
+      RankedReport(ranked, 'abandono de ' + string(ranked.Slots[slot].Nickname));
+    end;
+  end;
+end;
+
+
+procedure TKMNetServer.RankedRoomsReceived(const aText: string);
+var
+  changes: string;
+  I: Integer;
+begin
+  if not fListening then Exit; // a resposta pode chegar depois do StopListening
+
+  changes := fRankedRooms.Merge(aText);
+  if changes <> '' then
+    Status('Ranked:' + changes);
+
+  // A API reserva a sala 3 mesmo que o servidor so tenha criado a sala 0 ainda:
+  // as salas nascem sob demanda. Sem isto, o jogador mandado para a sala 3
+  // levaria "sala invalida" e a reserva nunca comecaria.
+  for I := 0 to fRankedRooms.Count - 1 do
+    while (fRoomCount <= fRankedRooms.Item(I).Room) and AddNewRoom do
+      ;
+
+  for I := 0 to fRankedRooms.Count - 1 do
+    RankedBindRoom(fRankedRooms.Item(I));
+end;
+
+
+// Amarra aos slots da reserva os clientes que ja estao na sala.
+//
+// A reserva quase sempre chega antes do jogador, mas nao sempre: o launcher
+// manda entrar na sala 3 no mesmo instante em que a API a reserva, e o polling
+// pode estar a RANKED_POLL_INTERVAL do proximo. Sem isto, quem chegou primeiro
+// ficaria numa sala reservada sem slot nenhum -- e a partida nunca poderia
+// comecar, porque EveryoneHere jamais seria verdade.
+procedure TKMNetServer.RankedBindRoom(aRanked: TKMRankedRoom);
+var
+  I, slot: Integer;
+  client: TKMServerClient;
+begin
+  if aRanked.Live then Exit; // partida rodando nao se reconfigura
+  if not InRange(aRanked.Room, 0, fRoomCount - 1) then Exit;
+
+  // De tras para frente: expulsar alguem dispara ClientDisconnect, que mexe na
+  // lista durante o laco.
+  for I := fClientList.Count - 1 downto 0 do
+  begin
+    client := fClientList[I];
+    if client.Room <> aRanked.Room then Continue;
+
+    slot := aRanked.SlotOfNickname(client.AuthNickname);
+    if slot <> -1 then
+    begin
+      aRanked.Slots[slot].Handle := client.Handle;
+      aRanked.Slots[slot].AwaySince := 0;
+      Continue;
+    end;
+
+    // Estranho numa sala que acabou de virar reservada. So tiramos quem esta no
+    // lobby: arrancar alguem de uma partida em andamento seria pior que o
+    // problema que estamos consertando.
+    //
+    // mkKicked, e nao mkRefuseToJoin: este ja entrou na sala, entao o
+    // OnDisconnect do cliente esta atribuido e o pacote tem quem o atenda.
+    if fRoomInfo[aRanked.Room].GameInfo.GameState = mgsLobby then
+    begin
+      Status(Format('Ranked: sala %d ficou reservada, tirando %d que nao esta na reserva',
+                    [aRanked.Room, client.Handle]));
+      PacketSend(client.Handle, mkKicked, TX_KB_NOT_IN_MATCH, True);
+      fServer.Kick(client.Handle);
+    end;
+  end;
+
+  // So a primeira vez: reenviar a configuracao a cada polling seria tres
+  // pacotes por sala a cada 5 segundos para nao mudar nada.
+  if not aRanked.Imposed then
+    RankedImpose(aRanked.Room);
+end;
+
+
+// Manda para a sala a configuracao da reserva: mapa, opcoes e lista de
+// jogadores, montada aqui e nao pelo host.
+//
+// LIMITE HONESTO: o cliente oficial so aplica mkPlayersList/mkGameOptions/
+// mkMapSelect quando e joiner (ver TKMNetworking.HandleMessage) -- o host os
+// ignora. Quem prende o host sao as outras duas metades: o lobby travado no
+// cliente, e a recusa de repassar qualquer pacote dele que divirja da reserva
+// (RankedRelayAllowed). Um host adulterado pode manter uma tela divergente,
+// mas nao consegue fazer a sala inteira jogar por ela nem dar mkStart.
+procedure TKMNetServer.RankedImpose(aRoom: Integer);
+var
+  ranked: TKMRankedRoom;
+  netRoom: TKMNetRoom;
+  options: TKMGameOptions;
+  M: TKMemoryStream;
+  I, hostSlot: Integer;
+begin
+  ranked := fRankedRooms.ByRoom(aRoom);
+  if ranked = nil then Exit;
+
+  // Com a partida rodando, mandar mkPlayersList/mkGameOptions e mexer na
+  // configuracao debaixo de uma simulacao lockstep: desync na hora. Depois do
+  // inicio, quem manda e o determinismo.
+  if ranked.Live then Exit;
+
+  // Impor com gente faltando geraria uma lista sem IndexOnServer real para
+  // quem nao chegou, e dois slots com handle vazio sao indistinguiveis para o
+  // cliente. Esperamos a sala fechar.
+  if not ranked.EveryoneHere then Exit;
+
+  netRoom := TKMNetRoom.Create;
+  options := TKMGameOptions.Create;
+  try
+    netRoom.HostDoesSetup := True; // ninguem escolhe local nem time: a reserva escolheu
+    netRoom.RandomizeTeamLocations := False;
+    netRoom.SpectatorsAllowed := False;
+
+    hostSlot := 1;
+    for I := 1 to ranked.Count do
+    begin
+      netRoom.AddPlayer(ranked.Slots[I].Nickname, ranked.Slots[I].Handle, '');
+      netRoom[netRoom.Count].Team := ranked.Slots[I].Team;
+      netRoom[netRoom.Count].StartLocation := ranked.Slots[I].Loc;
+      netRoom[netRoom.Count].ReadyToStart := True;
+      netRoom[netRoom.Count].HasMapOrSave := True;
+      if ranked.Slots[I].Handle = fRoomInfo[aRoom].HostHandle then
+        hostSlot := netRoom.Count;
+    end;
+
+    options.Peacetime := ranked.Peacetime;
+    options.SpeedPT := ranked.Speed;
+    options.SpeedAfterPT := ranked.Speed;
+    options.RandomSeed := ranked.Seed;
+
+    // Ordem igual a do host (mapa, opcoes, lista): o cliente recalcula cores e
+    // locais validos quando o mapa muda, entao a lista tem que vir depois dele.
+    if ranked.MapName <> '' then
+    begin
+      M := TKMemoryStreamBinary.Create;
+      M.WriteW(ranked.MapName);
+      M.Write(ranked.MapCRC);
+      PacketSendToRoom(mkMapSelect, aRoom, M);
+      M.Free;
+    end;
+
+    M := TKMemoryStreamBinary.Create;
+    options.Save(M);
+    PacketSendToRoom(mkGameOptions, aRoom, M);
+    M.Free;
+
+    M := TKMemoryStreamBinary.Create;
+    M.Write(hostSlot);
+    netRoom.SaveToStream(M);
+    PacketSendToRoom(mkPlayersList, aRoom, M);
+    M.Free;
+
+    ranked.Imposed := True;
+    Status('Ranked: configuracao imposta na ' + ranked.Describe);
+  finally
+    options.Free;
+    netRoom.Free;
+  end;
+end;
+
+
+// Confere uma lista de jogadores (mkPlayersList ou mkStart) contra a reserva.
+function TKMNetServer.RankedListMatches(aRanked: TKMRankedRoom; aNetRoom: TKMNetRoom): Boolean;
+var
+  I, slot: Integer;
+begin
+  Result := False;
+  if aNetRoom.Count <> aRanked.Count then Exit;
+
+  for I := 1 to aNetRoom.Count do
+  begin
+    // Nada de IA nem espectador em ranqueada: sao vagas que ninguem reservou.
+    if aNetRoom[I].PlayerNetType <> nptHuman then Exit;
+
+    slot := aRanked.SlotOfNickname(aNetRoom[I].Nickname);
+    if slot = -1 then Exit;
+    if aNetRoom[I].Team <> aRanked.Slots[slot].Team then Exit;
+    // Loc 0 na reserva significa "a API nao exigiu local".
+    if (aRanked.Slots[slot].Loc <> 0) and (aNetRoom[I].StartLocation <> aRanked.Slots[slot].Loc) then Exit;
+  end;
+
+  Result := True;
+end;
+
+
+// Portao de tudo que o host difunde numa sala reservada.
+//
+// mkPlayersList, mkGameOptions, mkMapSelect e mkStart sao os quatro pacotes que
+// definem a partida. Numa sala comum eles sao palavra do host; aqui eles so
+// passam se disserem exatamente o que a reserva diz. E aqui que o travamento
+// deixa de ser cosmetico.
+function TKMNetServer.RankedRelayAllowed(aHandle: TKMNetHandleIndex; aRoom: Integer; aPacket: PByte; aLength: Word): Boolean;
+const
+  GUARDED: set of TKMNetMessageKind = [mkPlayersList, mkGameOptions, mkMapSelect,
+                                       mkSaveSelect, mkResetMap, mkStart];
+var
+  ranked: TKMRankedRoom;
+  kind: TKMNetMessageKind;
+  netRoom: TKMNetRoom;
+  options: TKMGameOptions;
+  M: TKMemoryStream;
+  tmpInt: Integer;
+  tmpCardinal: Cardinal;
+  tmpStringW: UnicodeString;
+  reason: string;
+begin
+  Result := True;
+
+  // Caminho comum de um servidor sem ranqueada, e de todo mkCommands durante a
+  // partida: sai antes de tocar em qualquer estrutura.
+  if fRankedRooms.Count = 0 then Exit;
+
+  kind := TKMNetMessageKind(aPacket^);
+  if not (kind in GUARDED) then Exit;
+
+  ranked := fRankedRooms.ByRoom(aRoom);
+  if ranked = nil then Exit;
+
+  // Estes quatro sao pacotes de host. Vindo de outro cliente, e cliente
+  // adulterado tentando reconfigurar a sala dos outros.
+  if fRoomInfo[aRoom].HostHandle <> aHandle then
+  begin
+    Status(Format('Ranked: sala %d, pacote de configuracao veio de %d, que nao e o host', [aRoom, aHandle]));
+    Exit(False);
+  end;
+
+  reason := '';
+  M := TKMemoryStreamBinary.Create;
+  try
+    if aLength > 1 then
+      M.WriteBuffer((PByte(aPacket) + 1)^, aLength - 1);
+    M.Position := 0;
+
+    // Pacote curto ou truncado nao pode derrubar o servidor: qualquer excecao
+    // de leitura vira "divergente" e o pacote morre aqui.
+    try
+      case kind of
+        mkSaveSelect:
+          reason := 'ranqueada nao joga save';
+
+        mkResetMap:
+          reason := 'mapa da reserva nao pode ser limpo';
+
+        mkMapSelect:
+          begin
+            M.ReadW(tmpStringW);
+            M.Read(tmpCardinal);
+            // MapCRC 0 = a reserva nao trouxe CRC legivel. Recusar todo mapa
+            // nesse caso travaria a sala sem que ninguem pudesse consertar.
+            if (ranked.MapCRC <> 0) and (tmpCardinal <> ranked.MapCRC) then
+              reason := Format('mapa %s (CRC %s) nao e o da reserva (CRC %s)',
+                               [tmpStringW, IntToHex(Integer(tmpCardinal), 8), IntToHex(Integer(ranked.MapCRC), 8)]);
+          end;
+
+        mkGameOptions:
+          begin
+            options := TKMGameOptions.Create;
+            try
+              options.Load(M);
+              ranked.Seed := options.RandomSeed;
+              if options.Peacetime <> ranked.Peacetime then
+                reason := Format('peacetime %d, reserva pede %d', [options.Peacetime, ranked.Peacetime])
+              else
+              // Comparacao com folga, nao igualdade: a reserva chega como texto
+              // ("spd=1.2") e o cliente manda um literal Single. Exigir os bits
+              // iguais travaria a sala para sempre por causa de um ULP.
+              if (Abs(options.SpeedPT - ranked.Speed) > 0.01)
+              or (Abs(options.SpeedAfterPT - ranked.Speed) > 0.01) then
+                reason := 'velocidade divergente da reserva';
+            finally
+              options.Free;
+            end;
+          end;
+
+        mkPlayersList, mkStart:
+          begin
+            netRoom := TKMNetRoom.Create;
+            try
+              M.Read(tmpInt); // indice do host na lista
+              netRoom.LoadFromStream(M);
+              if not RankedListMatches(ranked, netRoom) then
+                reason := 'lista de jogadores divergente da reserva';
+            finally
+              netRoom.Free;
+            end;
+
+            // mkStart so passa com a sala cheia. Comecar com gente faltando e a
+            // forma mais barata de manipular uma ranqueada.
+            if (reason = '') and (kind = mkStart) and not ranked.EveryoneHere then
+              reason := Format('inicio com %d de %d jogadores presentes',
+                               [ranked.ConnectedCount, ranked.Count]);
+          end;
+      end;
+    except
+      on E: Exception do
+        reason := 'pacote ilegivel: ' + E.Message;
+    end;
+  finally
+    M.Free;
+  end;
+
+  if reason = '' then Exit;
+
+  Status(Format('Ranked: sala %d, %s descartado -- %s',
+                [aRoom, GetEnumName(TypeInfo(TKMNetMessageKind), Integer(kind)), reason]));
+  Result := False;
+
+  // Reafirma a configuracao para todo mundo. Sem isto, um host divergente
+  // deixaria os joiners parados com o que sobrou da ultima lista valida.
+  RankedImpose(aRoom);
+end;
+
+
+// Le o mkSetGameInfo do host: e por ele que o resultado de cada jogador chega
+// ao servidor (TKMNetGameInfo ja carrega WonOrLost por jogador).
+procedure TKMNetServer.RankedObserveGameInfo(aRoom: Integer);
+var
+  ranked: TKMRankedRoom;
+  gameInfo: TKMNetGameInfo;
+  I, slot: Integer;
+begin
+  ranked := fRankedRooms.ByRoom(aRoom);
+  if ranked = nil then Exit;
+
+  gameInfo := fRoomInfo[aRoom].GameInfo;
+
+  if gameInfo.GameState = mgsLobby then
+  begin
+    // No lobby o mkSetGameInfo e so espelho do que o host montou. Divergiu,
+    // reimpomos -- o pacote em si nao decide nada, mas denuncia que a tela do
+    // host saiu do lugar.
+    if ranked.Imposed then
+      for I := 1 to gameInfo.PlayerCount do
+      begin
+        slot := ranked.SlotOfNickname(gameInfo.Players[I].Name);
+        if (slot = -1) or (gameInfo.Players[I].Team <> ranked.Slots[slot].Team) then
+        begin
+          Status(Format('Ranked: sala %d anunciou setup divergente, reimpondo', [aRoom]));
+          RankedImpose(aRoom);
+          Break;
+        end;
+      end;
+    Exit;
+  end;
+
+  // Saiu do lobby: a partida existe.
+  ranked.Live := True;
+  // MissionTime = Tick / 24 / 60 / 60 / 10 (ver TKMGame.MissionTime), entao o
+  // caminho de volta e multiplicar pelos mesmos fatores.
+  if gameInfo.GameTime > 0 then
+    ranked.Ticks := Round(gameInfo.GameTime * 24 * 60 * 60 * 10);
+
+  if not ranked.Started then
+  begin
+    ranked.Started := True;
+    Status('Ranked: match ' + string(ranked.MatchId) + ' comecou');
+    HttpEnqueue(hrkRankedNotify, NET_ADDRESS_EMPTY,
+                fRankedUrl + '/started?secret=' + fRankedSecret
+                + '&match=' + RankedUrlEncode(ranked.MatchId)
+                + '&seed=' + IntToStr(gameInfo.GameOptions.RandomSeed)
+                + '&tick=' + IntToStr(ranked.Ticks));
+  end;
+
+  // O resultado so anda para frente: uma vitoria vista uma vez nao volta a
+  // wolNone porque um anuncio posterior chegou sem ela.
+  for I := 1 to gameInfo.PlayerCount do
+    if gameInfo.Players[I].WonOrLost <> wolNone then
+    begin
+      slot := ranked.SlotOfNickname(gameInfo.Players[I].Name);
+      if (slot <> -1) and (ranked.Slots[slot].Outcome = wolNone) then
+      begin
+        ranked.Slots[slot].Outcome := gameInfo.Players[I].WonOrLost;
+        Status(Format('Ranked: %s %s', [string(ranked.Slots[slot].Nickname),
+                                        WonOrLostText[ranked.Slots[slot].Outcome]]));
+      end;
+    end;
+end;
+
+
+procedure TKMNetServer.RankedClientGone(aHandle: TKMNetHandleIndex; aRoom: Integer);
+var
+  ranked: TKMRankedRoom;
+  slot: Integer;
+begin
+  if aRoom = -1 then Exit;
+
+  ranked := fRankedRooms.ByRoom(aRoom);
+  if ranked = nil then Exit;
+
+  slot := ranked.SlotOfHandle(aHandle);
+  if slot = -1 then Exit;
+
+  ranked.Slots[slot].Handle := NET_ADDRESS_EMPTY;
+  // Max(1, ...) porque AwaySince = 0 e o nosso "esta presente". TimeGet pode
+  // valer 0 no primeiro milissegundo de uptime da maquina.
+  ranked.Slots[slot].AwaySince := Max(1, TimeGet);
+  Status(Format('Ranked: %s caiu da sala %d, %d segundos para voltar',
+                [string(ranked.Slots[slot].Nickname), aRoom, RANKED_ABANDON_TIMEOUT div 1000]));
+end;
+
+
+procedure TKMNetServer.RankedReport(aRanked: TKMRankedRoom; const aReason: string);
+begin
+  // Marcado antes de enfileirar: a resposta HTTP demora, e um segundo gatilho
+  // no meio do caminho mandaria o mesmo resultado duas vezes.
+  aRanked.Reported := True;
+
+  Status(Format('Ranked: reportando match %s (%s), vencedor "%s", %d ticks',
+                [string(aRanked.MatchId), aReason, aRanked.WinnerTeam, aRanked.Ticks]));
+
+  HttpEnqueue(hrkRankedNotify, NET_ADDRESS_EMPTY,
+              fRankedUrl + '/report?secret=' + fRankedSecret + '&' + aRanked.ReportQuery);
+end;
+
+
+// True quando o pedido do host tem que ser engolido por ser sala ranqueada.
+function TKMNetServer.RankedBlocked(aRoom: Integer; const aWhat: string): Boolean;
+begin
+  Result := fRankedRooms.IsReserved(aRoom);
+  if Result then
+    Status(Format('Ranked: sala %d, %s do host ignorado', [aRoom, aWhat]));
 end;
 
 
@@ -614,6 +1192,11 @@ begin
     Status('Kam Brasil auth ENABLED, verifying against ' + fAuthVerifyUrl)
   else
     Status('Kam Brasil auth disabled (open server)');
+
+  if RankedEnabled then
+    Status('Kam Brasil ranked ENABLED, polling ' + fRankedUrl + '/rooms')
+  else
+    Status('Kam Brasil ranked disabled (no reserved rooms)');
 
   fListening := True;
   SaveHTMLStatus;
@@ -686,10 +1269,11 @@ begin
   {$IFDEF FPC} fServer.UpdateStateIdle; {$ENDIF}
 
   // kam_brasil: no FPC o cliente HTTP so avanca quando bombeado daqui.
-  if fAuthRequire then
+  if fAuthRequire or RankedEnabled then
   begin
-    fAuthHTTP.UpdateStateIdle;
-    AuthProcessQueue;
+    fHTTP.UpdateStateIdle;
+    RankedUpdate;
+    HttpProcessQueue;
   end;
 end;
 
@@ -745,8 +1329,10 @@ end;
 
 procedure TKMNetServer.AddClientToRoom(aHandle: TKMNetHandleIndex; aRoom: Integer; aGameRevision: TKMGameRevision);
 var
-  I: Integer;
+  I, rankedSlot: Integer;
   M: TKMemoryStream;
+  ranked: TKMRankedRoom;
+  client: TKMServerClient;
 begin
   if fClientList.GetByHandle(aHandle).Room <> -1 then exit; //Changing rooms is not allowed yet
 
@@ -788,6 +1374,32 @@ begin
       Exit;
     end;
 
+  // kam_brasil: numa sala reservada so entra quem esta na reserva.
+  //
+  // A identidade usada e a do AuthNickname -- o nome que a nossa API confirmou
+  // para o token, nao o que o cliente diz chamar-se. Fica antes da atribuicao
+  // de host de proposito: um estranho recusado nao pode virar dono da sala no
+  // caminho para a porta.
+  ranked := fRankedRooms.ByRoom(aRoom);
+  if ranked <> nil then
+  begin
+    client := fClientList.GetByHandle(aHandle);
+    rankedSlot := -1;
+    if client <> nil then
+      rankedSlot := ranked.SlotOfNickname(client.AuthNickname);
+
+    if rankedSlot = -1 then
+    begin
+      Status('Client ' + IntToStr(aHandle) + ' is not on the reservation for room ' + IntToStr(aRoom));
+      PacketSend(aHandle, mkRefuseToJoin, TX_KB_NOT_IN_MATCH, True);
+      fServer.Kick(aHandle);
+      Exit;
+    end;
+
+    ranked.Slots[rankedSlot].Handle := aHandle;
+    ranked.Slots[rankedSlot].AwaySince := 0; // voltou dentro da janela
+  end;
+
   //Let the first client be a Host
   if fRoomInfo[aRoom].HostHandle = NET_ADDRESS_EMPTY then
   begin
@@ -816,6 +1428,12 @@ begin
 
   MeasurePings;
   SaveHTMLStatus;
+
+  // kam_brasil: com a sala fechada, a configuracao da reserva vale a partir de
+  // agora. Fica depois do mkConnectedToRoom porque quem acabou de chegar
+  // precisa estar na sala para receber o mkPlayersList.
+  if ranked <> nil then
+    RankedImpose(aRoom);
 end;
 
 
@@ -842,6 +1460,11 @@ begin
   room := client.Room;
   if room <> -1 then
     Status('Client '+inttostr(aHandle)+' has disconnected'); //Only log messages for clients who entered a room
+
+  // kam_brasil: em sala reservada, a saida liga o relogio dos 3 minutos. Nao e
+  // abandono ainda -- queda de rede e reconexao acontecem o tempo todo.
+  RankedClientGone(aHandle, room);
+
   fClientList.RemPlayer(aHandle);
 
   if room = -1 then Exit; //The client was not assigned a room yet
@@ -1119,7 +1742,8 @@ begin
                 client := fClientList.GetByHandle(aSenderHandle);
                 if client <> nil then
                   client.AuthPending := True;
-                AuthEnqueue(aSenderHandle, tmpStringA);
+                HttpEnqueue(hrkAuth, aSenderHandle,
+                            fAuthVerifyUrl + '?token=' + UnicodeString(tmpStringA));
               end;
               // Com auth desligada o pacote e simplesmente ignorado, o que
               // mantem clientes novos compativeis com servidores antigos.
@@ -1182,6 +1806,9 @@ begin
     mkSetPassword:
             if senderIsHost then
             begin
+              // kam_brasil: senha numa sala reservada trancaria fora justamente
+              // quem a fila mandou entrar.
+              if RankedBlocked(senderRoom, 'mkSetPassword') then Exit;
               aData.ReadA(tmpStringA); //Password
               fRoomInfo[senderRoom].Password := tmpStringA;
             end;
@@ -1189,11 +1816,18 @@ begin
             if senderIsHost then
             begin
               fRoomInfo[senderRoom].GameInfo.LoadFromStream(aData);
+              // kam_brasil: este pacote e o unico caminho pelo qual o resultado
+              // de cada jogador chega ao servidor. Ver RankedObserveGameInfo.
+              RankedObserveGameInfo(senderRoom);
               SaveHTMLStatus;
             end;
     mkKickPlayer:
             if senderIsHost then
             begin
+              // kam_brasil: o host de uma ranqueada e um dos jogadores. Expulsar
+              // o adversario para ganhar por W.O. seria o cheat mais barato que
+              // existe.
+              if RankedBlocked(senderRoom, 'mkKickPlayer') then Exit;
               aData.Read(tmpSmallInt);
               if fClientList.GetByHandle(tmpSmallInt) <> nil then
               begin
@@ -1204,6 +1838,8 @@ begin
     mkBanPlayer:
             if senderIsHost then
             begin
+              // kam_brasil: pior que o kick -- o banido nem consegue voltar.
+              if RankedBlocked(senderRoom, 'mkBanPlayer') then Exit;
               aData.Read(tmpSmallInt);
               if fClientList.GetByHandle(tmpSmallInt) <> nil then
               begin
@@ -1215,6 +1851,9 @@ begin
     mkGiveHost:
             if senderIsHost then
             begin
+              // kam_brasil: passar o host adiante e passar adiante o poder que
+              // acabamos de tirar dele.
+              if RankedBlocked(senderRoom, 'mkGiveHost') then Exit;
               aData.Read(tmpSmallInt);
               if fClientList.GetByHandle(tmpSmallInt) <> nil then
               begin
@@ -1324,6 +1963,20 @@ begin
     begin
 //      Kind := GetMessKind(PacketSender, @SenderClient.fBuffer[6], PacketLength);
 //      gLog.AddTime('Got msg %s from %d to %d', [GetEnumName(TypeInfo(TKMNetMessageKind), Integer(Kind)), PacketSender, PacketRecipient]);
+
+      // kam_brasil: numa sala reservada, os pacotes que definem a partida
+      // (lista, opcoes, mapa, inicio) so trafegam se baterem com a reserva.
+      //
+      // A conferencia vem aqui, e nao no HandleMessage, porque esses pacotes
+      // nao sao enderecados ao servidor: o host os difunde e o servidor apenas
+      // repassa. Este e o unico ponto por onde eles passam sob nosso controle.
+      if (packetLength > 0) and (senderRoom <> -1)
+      and not RankedRelayAllowed(aHandle, senderRoom, @senderClient.fBuffer[6], packetLength) then
+      begin
+        // Descartado. O ajuste de indices no fim do laco ainda roda, entao o
+        // buffer avanca normalmente e a conexao segue viva.
+      end
+      else
       case packetRecipient of
         NET_ADDRESS_OTHERS: //Transmit to all except sender
                 //Iterate backwards because sometimes calling Send results in ClientDisconnect (LNet only?)
@@ -1441,7 +2094,10 @@ var
   I: Integer;
 begin
   for I := 0 to fRoomCount-1 do
-    if GetRoomClientsCount(I) = 0 then
+    // kam_brasil: sala reservada nao entra no rodizio de "primeira vaga livre".
+    // Sem isto, quem clica em Multijogador cai justamente na sala que a fila
+    // separou para uma partida ranqueada.
+    if (GetRoomClientsCount(I) = 0) and not fRankedRooms.IsReserved(I) then
       Exit(I);
 
   // Otherwise we must create a room

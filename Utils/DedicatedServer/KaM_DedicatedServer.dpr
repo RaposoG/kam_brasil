@@ -29,6 +29,11 @@ uses
   KM_Settings in '..\..\src\settings\KM_Settings.pas',
   KM_ServerSettings in '..\..\src\settings\KM_ServerSettings.pas',
   KM_NetTypes in '..\..\src\net\KM_NetTypes.pas',
+  // kam_brasil: a lista de jogadores da sala, para o servidor montar e conferir
+  // o mkPlayersList da reserva. Compila aqui sem a simulacao nem a pilha
+  // grafica gracas ao define NET_ROOM_HEADLESS (ver o Dockerfile do gameserver).
+  KM_NetRoom in '..\..\src\net\KM_NetRoom.pas',
+  KM_NetRanked in '..\..\src\net\KM_NetRanked.pas',
   KM_NetDedicatedServer in '..\..\src\net\KM_NetDedicatedServer.pas',
   {$IFDEF WDC}
   KM_ConsoleTimer in '..\..\src\utils\KM_ConsoleTimer.pas',
@@ -79,6 +84,8 @@ begin
   // kam_brasil: exigencia de conta. Desligada por padrao no ini.
   // Antes do Start, para o socket nunca abrir sem a politica definida.
   fDedicatedServer.Server.SetAuth(fSettings.RequireAuth, fSettings.AuthVerifyUrl);
+  // kam_brasil: salas ranqueadas. URL vazia = servidor comum.
+  fDedicatedServer.Server.SetRanked(fSettings.RankedUrl, fSettings.RankedSecret);
   fDedicatedServer.OnMessage := fEventHandler.ServerStatusMessage;
   fDedicatedServer.Start(fSettings.ServerName, StrToInt(fSettings.ServerPort), fSettings.AnnounceServer, fSettings.ServerUDPAnnounce);
 

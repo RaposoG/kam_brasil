@@ -466,6 +466,7 @@
         <DCCReference Include="src\net\KM_NetFileTransfer.pas"/>
         <DCCReference Include="src\net\KM_NetGameInfo.pas"/>
         <DCCReference Include="src\net\KM_NetServerLocator.pas"/>
+        <DCCReference Include="src\net\KM_NetRanked.pas"/>
         <DCCReference Include="src\net\KM_NetRoom.pas"/>
         <DCCReference Include="src\net\KM_NetServer.pas"/>
         <DCCReference Include="src\net\KM_NetServerOverbyte.pas"/>

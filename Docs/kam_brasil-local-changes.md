@@ -204,6 +204,53 @@ trecho precisa ser revisto — está comentado no local.
 
 ---
 
+## 6. Servidor dedicado como dono da sala ranqueada (Fase 0/1)
+
+O servidor dedicado passa a consultar a API pelas **reservas de sala** e a impor a
+configuração da partida, em vez de aceitar o que o host mandar. **Desligado por padrão**
+(`KamBrasilRankedUrl` vazio): sem a URL configurada, nada disto roda e o servidor se
+comporta exatamente como antes.
+
+### Arquivos tocados
+
+| Arquivo | O quê |
+|---|---|
+| `src/net/KM_NetRanked.pas` | **novo** — reservas, parsing do `/rooms` e máquina de resultado |
+| `src/net/KM_NetServer.pas` | fila HTTP generalizada, imposição, bloqueios, reporte |
+| `src/net/KM_NetRoom.pas` | `LoadFromStream` valida o `fCount` que vem da rede |
+| `src/settings/KM_ServerSettings.pas` | `KamBrasilRankedUrl`, `KamBrasilRankedSecret` |
+| `Utils/DedicatedServer/KaM_DedicatedServer.dpr` | liga `KM_NetRoom` + `KM_NetRanked` |
+| `Utils/DedicatedServer/KM_NetRankedCheck.dpr` | **novo** — autoteste do `KM_NetRanked` |
+| `KM_TextIDs.inc` + `.libx` | texto 1607 |
+
+### Como funciona
+
+```
+API  ──GET /internal/ranked/rooms──►  servidor guarda a reserva da sala N
+jogador entra na sala N            ►  só passa quem o AuthNickname coloca na reserva
+sala fecha                         ►  servidor envia mkMapSelect/mkGameOptions/mkPlayersList
+host difunde configuração          ►  só é repassada se bater com a reserva
+partida sai do lobby               ►  GET /internal/ranked/started (semente + tick)
+todos com WonOrLost, ou 3 min fora ►  GET /internal/ranked/report
+```
+
+### `NET_ROOM_HEADLESS`
+
+`KM_NetRoom` linka no servidor dedicado sem arrastar `KM_Hand`/`KM_ResLocales` — ou seja,
+sem a simulação e a pilha gráfica, que não compilam com FPC. O define é passado só no build
+do servidor (`-dNET_ROOM_HEADLESS`, ver o `Dockerfile` do `gameserver`). O cliente Delphi
+continua compilando a versão completa, sem define nenhum.
+
+### Limite conhecido: o host ignora o `mkPlayersList` do servidor
+
+`TKMNetworking.HandleMessage` só aplica `mkPlayersList`, `mkGameOptions` e `mkMapSelect`
+quando o cliente é **joiner** — o host os descarta. Então a imposição prende os joiners, e
+o host é preso pelas outras duas metades: o lobby travado no cliente e a recusa de repassar
+qualquer pacote dele que divirja da reserva. Enquanto o cliente não souber montar o lobby a
+partir da reserva, o `mkStart` de uma sala ranqueada é sempre recusado — de propósito.
+
+---
+
 ## Arquivos copiados para dentro do repo (não versionados)
 
 Tudo abaixo é coberto pelo `.gitignore`, então a working tree permanece limpa:

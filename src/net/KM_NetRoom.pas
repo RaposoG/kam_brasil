@@ -1736,6 +1736,22 @@ begin
   aStream.Read(SpectatorSlotsOpen);
   aStream.Read(VoteActive);
   aStream.Read(fCount);
+
+  // kam_brasil: fCount vem de outro processo -- do host, quando um cliente le o
+  // mkPlayersList, e de um pacote qualquer da rede, quando o servidor dedicado
+  // confere a lista de uma sala ranqueada. O build nao liga checagem de faixa,
+  // entao um valor forjado escreveria fora de fSlots.
+  //
+  // Zeramos em vez de levantar excecao: no cliente, uma excecao aqui subiria
+  // pelo PacketRecieve e derrubaria o jogo por causa de um pacote corrompido.
+  // Lista vazia e visivelmente quebrada e nao inicia partida nenhuma.
+  if not InRange(fCount, 0, MAX_LOBBY_SLOTS) then
+  begin
+    gLog.AddTime(Format('Players list with invalid count (%d), ignoring', [fCount]));
+    fCount := 0;
+    Exit;
+  end;
+
   for I := 1 to fCount do
     fSlots[I].Load(aStream);
 end;
