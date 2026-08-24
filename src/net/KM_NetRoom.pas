@@ -3,8 +3,14 @@ unit KM_NetRoom;
 interface
 uses
   Classes, KromUtils, StrUtils, Math, SysUtils,
-  KM_CommonClasses, KM_CommonTypes, KM_Defaults, KM_Hand, KM_ResLocales, KM_NetTypes,
-  KM_HandTypes;
+  KM_CommonClasses, KM_CommonTypes, KM_Defaults, KM_NetTypes
+  // kam_brasil: sob NET_ROOM_HEADLESS o servidor dedicado linka esta unit sem
+  // arrastar a simulacao e a pilha grafica junto. Ver o comentario em
+  // GetPlayerType para o porque.
+  {$IFNDEF NET_ROOM_HEADLESS}
+  , KM_Hand, KM_ResLocales, KM_HandTypes
+  {$ENDIF}
+  ;
 
 
 type
@@ -54,7 +60,9 @@ type
     function IsAdvancedComputer: Boolean;
     function IsClosed: Boolean;
     function IsSpectator: Boolean;
+    {$IFNDEF NET_ROOM_HEADLESS}
     function GetPlayerType: TKMHandType;
+    {$ENDIF}
     function SlotName: UnicodeString; //Player name if it's human or computer or closed
     property Nickname: AnsiString read GetNickname; //Human player nickname (ANSI-Latin)
     property NicknameColored: AnsiString read GetNicknameColored;
@@ -151,7 +159,11 @@ type
 implementation
 uses
   TypInfo,
-  KM_Log, KM_ResTexts, KM_CommonUtils, KM_HandsCollection;
+  KM_Log, KM_ResTexts, KM_CommonUtils
+  {$IFNDEF NET_ROOM_HEADLESS}
+  , KM_HandsCollection
+  {$ENDIF}
+  ;
 
 
 { TKMNetRoomSlot }
@@ -203,8 +215,14 @@ end;
 
 procedure TKMNetRoomSlot.SetLangCode(const aCode: AnsiString);
 begin
+  {$IFDEF NET_ROOM_HEADLESS}
+  // Sem a tabela de idiomas no servidor. O codigo vem do cliente, que ja o
+  // validou contra locales.txt; aqui ele so trafega.
+  fLangCode := aCode;
+  {$ELSE}
   if gResLocales.IndexByCode(aCode) <> -1 then
     fLangCode := aCode;
+  {$ENDIF}
 end;
 
 
@@ -297,12 +315,14 @@ begin
 end;
 
 
+{$IFNDEF NET_ROOM_HEADLESS}
 function TKMNetRoomSlot.GetPlayerType: TKMHandType;
 const
   PlayerTypes: array [TKMNetPlayerType] of TKMHandType = (hndHuman, hndComputer, hndComputer, hndComputer);
 begin
   Result := PlayerTypes[PlayerNetType];
 end;
+{$ENDIF}
 
 
 function TKMNetRoomSlot.SlotName: UnicodeString;
@@ -323,10 +343,16 @@ function TKMNetRoomSlot.GetNickname: AnsiString;
 begin
   if Self = nil then Exit('');
 
+  {$IFDEF NET_ROOM_HEADLESS}
+  // O servidor nao tem simulacao: o nome de exibicao de uma hand de IA nao
+  // existe aqui, e nao faz falta -- quem o usa e a interface do cliente.
+  Result := fNickname;
+  {$ELSE}
   if IsHuman or (gHands = nil) or (HandIndex = -1) then
     Result := fNickname
   else
     Result := AnsiString(gHands[HandIndex].OwnerName(True, False));
+  {$ENDIF}
 end;
 
 
