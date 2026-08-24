@@ -13,4 +13,4 @@
 // Sem ponto-e-virgula no fim: ele vem depois do {$I ...} em KM_Defaults.pas,
 // como nos .inc de revisao do upstream. Com um aqui, a declaracao fecha duas
 // vezes e o Delphi para em "Declaration expected but ';' found".
-KAM_BRASIL_VERSION = '1.0.5'
+KAM_BRASIL_VERSION = '1.2.0'
