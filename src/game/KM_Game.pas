@@ -1201,6 +1201,11 @@ begin
 
     if Assigned(gNetworking.OnPlayersSetup) then
       gNetworking.OnPlayersSetup; // Update players panel
+
+    // kam_brasil: mesmo motivo do PlayerDefeat -- o servidor precisa ver o
+    // resultado no momento em que ele acontece.
+    if Assigned(gNetworking.OnMPGameInfoChanged) then
+      gNetworking.OnMPGameInfoChanged;
   end;
 
   if fParams.Mode = gmMultiSpectate then
@@ -1266,6 +1271,13 @@ begin
 
                 if Assigned(gNetworking.OnPlayersSetup) then
                   gNetworking.OnPlayersSetup; // Update players panel
+
+                // kam_brasil: avisa o servidor dedicado, que e quem decide o
+                // resultado. AnnounceGameInfo ja envia o WonOrLost de cada
+                // jogador, mas so disparava em mudanca de sala -- nunca no fim
+                // da partida.
+                if Assigned(gNetworking.OnMPGameInfoChanged) then
+                  gNetworking.OnMPGameInfoChanged;
               end;
     gmMultiSpectate:
               begin
@@ -1275,6 +1287,13 @@ begin
 
                 if Assigned(gNetworking.OnPlayersSetup) then
                   gNetworking.OnPlayersSetup; // Update players panel
+
+                // kam_brasil: avisa o servidor dedicado, que e quem decide o
+                // resultado. AnnounceGameInfo ja envia o WonOrLost de cada
+                // jogador, mas so disparava em mudanca de sala -- nunca no fim
+                // da partida.
+                if Assigned(gNetworking.OnMPGameInfoChanged) then
+                  gNetworking.OnMPGameInfoChanged;
               end;
     // We have not thought of anything to display on players defeat in Replay
   end;
