@@ -276,6 +276,49 @@ begin
 end;
 
 
+procedure TestPronto;
+var
+  rooms: TKMRankedRooms;
+  r: TKMRankedRoom;
+begin
+  rooms := TKMRankedRooms.Create;
+  try
+    rooms.Merge(LINE_1V1);
+    r := rooms.ByRoom(0);
+    if r = nil then
+    begin
+      Check(False, 'reserva 1v1 criada');
+      Exit;
+    end;
+
+    // O pronto nasce do jogador, nao da reserva: ninguem comeca pronto.
+    Check(not r.Slots[1].Ready, 'ninguem nasce pronto');
+    Check(not r.AllReady, 'sala sem pronto nenhum nao inicia');
+
+    r.Slots[1].Ready := True;
+    Check(not r.AllReady, 'um pronto de dois nao inicia');
+
+    r.Slots[2].Ready := True;
+    Check(r.AllReady, 'todos prontos inicia');
+
+    // AllReady nao pergunta presenca -- e EveryoneHere quem faz isso. As duas
+    // juntas sao o gatilho do RankedStart.
+    Check(not r.EveryoneHere, 'todos prontos com a sala vazia nao e todos presentes');
+    r.Slots[1].Handle := 10;
+    r.Slots[2].Handle := 11;
+    Check(r.EveryoneHere and r.AllReady, 'gatilho completo: presentes e prontos');
+
+    // O merge do polling roda a cada 3s por cima da mesma reserva. Se ele
+    // reparseasse, apagaria o pronto que o jogador acabou de dar.
+    rooms.Merge(LINE_1V1);
+    r := rooms.ByRoom(0);
+    Check((r <> nil) and r.AllReady, 'pronto sobrevive ao polling');
+  finally
+    rooms.Free;
+  end;
+end;
+
+
 begin
   gFailures := 0;
 
@@ -285,6 +328,7 @@ begin
   TestResultado;
   TestAbandono;
   TestPresenca;
+  TestPronto;
 
   if gFailures = 0 then
     Writeln('KM_NetRanked: OK')

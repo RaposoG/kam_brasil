@@ -17,4 +17,13 @@ begin
   WriteLn('arquivo_sumiu=', not FileExists(GetEnvironmentVariable('KAMBRASIL_MATCH_FILE')));
   KamBrasilMatchUsada;
   WriteLn('apos_usada=', KamBrasilMatch.Disponivel);
+
+  // Sinal de sala ranqueada: nasce desligado (jogo comum), liga no auto-join e
+  // desliga ao sair da sala. Preso em True, o proximo lobby casual do jogador
+  // abriria travado -- e o que este caso guarda.
+  WriteLn('ranq_inicial=', KamBrasilEmRanqueada);
+  KamBrasilEntrouNaRanqueada;
+  WriteLn('ranq_ligado=', KamBrasilEmRanqueada);
+  KamBrasilSaiuDaRanqueada;
+  WriteLn('ranq_desligado=', KamBrasilEmRanqueada);
 end.

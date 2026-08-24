@@ -200,6 +200,9 @@ type
     procedure RankedUpdate;
     procedure RankedRoomsReceived(const aText: string);
     procedure RankedImpose(aRoom: Integer);
+    procedure RankedSendList(aRanked: TKMRankedRoom; aKind: TKMNetMessageKind);
+    procedure RankedStart(aRanked: TKMRankedRoom);
+    function RankedHostPacketTaken(aHandle: TKMNetHandleIndex; aRoom: Integer; aPacket: PByte; aLength: Word): Boolean;
     procedure RankedBindRoom(aRanked: TKMRankedRoom);
     procedure RankedObserveGameInfo(aRoom: Integer);
     procedure RankedClientGone(aHandle: TKMNetHandleIndex; aRoom: Integer);
@@ -807,6 +810,13 @@ begin
     slot := aRanked.SlotOfNickname(client.AuthNickname);
     if slot <> -1 then
     begin
+      // Handle diferente do que o slot guardava: quem reconectou ganhou outro
+      // IndexOnServer, e a lista que a sala tem na tela ainda aponta para o
+      // socket morto. Reimpor e o unico jeito de todo mundo voltar a apontar
+      // para ele -- inclusive o mkStart, que carrega os mesmos handles.
+      if aRanked.Slots[slot].Handle <> client.Handle then
+        aRanked.Imposed := False;
+
       aRanked.Slots[slot].Handle := client.Handle;
       aRanked.Slots[slot].AwaySince := 0;
       Continue;
@@ -834,22 +844,79 @@ begin
 end;
 
 
+// Monta a lista canonica da reserva e manda para a sala.
+//
+// Serve para mkPlayersList e para mkStart porque os dois carregam exatamente o
+// mesmo payload -- indice do host seguido do TKMNetRoom. E por isso que o
+// servidor consegue originar o inicio sem inventar formato nenhum: o pacote que
+// comeca a partida e a mesma lista que o lobby ja estava vendo.
+procedure TKMNetServer.RankedSendList(aRanked: TKMRankedRoom; aKind: TKMNetMessageKind);
+var
+  netRoom: TKMNetRoom;
+  M: TKMemoryStream;
+  I, hostSlot: Integer;
+begin
+  // Unico ponto que indexa fRoomInfo pelo numero que veio da API: uma reserva
+  // para uma sala que nao coube (fMaxRooms) escreveria fora do array.
+  if not InRange(aRanked.Room, 0, fRoomCount - 1) then Exit;
+
+  // kam_brasil: mesma regra do RankedImpose. Com alguem faltando, o slot dele
+  // sai com handle vazio, e dois slots vazios sao indistinguiveis para o
+  // cliente. Alcancavel: A e B no lobby, B cai, A clica pronto.
+  if not aRanked.EveryoneHere then Exit;
+
+  netRoom := TKMNetRoom.Create;
+  try
+    netRoom.HostDoesSetup := True; // ninguem escolhe local nem time: a reserva escolheu
+    netRoom.RandomizeTeamLocations := False;
+    netRoom.SpectatorsAllowed := False;
+
+    hostSlot := 1;
+    for I := 1 to aRanked.Count do
+    begin
+      netRoom.AddPlayer(aRanked.Slots[I].Nickname, aRanked.Slots[I].Handle, '');
+      netRoom[netRoom.Count].Team := aRanked.Slots[I].Team;
+      netRoom[netRoom.Count].StartLocation := aRanked.Slots[I].Loc;
+      // Cor de bandeira: ninguem roda ValidateColors numa sala ranqueada. Era o
+      // host quem rodava, dentro do StartClick, e ele nao inicia mais nada.
+      // Sem isto AddPlayer deixa FlagColor em 0 e os dois times entram da mesma
+      // cor invalida -- nao da desync, mas voce nao distingue suas unidades das
+      // do adversario.
+      netRoom[netRoom.Count].FlagColor := MP_PLAYER_COLORS[I];
+      // O pronto e do jogador: aqui so espelhamos o que ele clicou.
+      netRoom[netRoom.Count].ReadyToStart := aRanked.Slots[I].Ready;
+      // Ter o arquivo do mapa nao e opiniao, e fato: o mapa da temporada vai na
+      // release do jogo. Sem isto o jogador ficaria preso num download de um
+      // arquivo que ele ja tem.
+      netRoom[netRoom.Count].HasMapOrSave := True;
+      if aRanked.Slots[I].Handle = fRoomInfo[aRanked.Room].HostHandle then
+        hostSlot := netRoom.Count;
+    end;
+
+    M := TKMemoryStreamBinary.Create;
+    M.Write(hostSlot);
+    netRoom.SaveToStream(M);
+    PacketSendToRoom(aKind, aRanked.Room, M);
+    M.Free;
+  finally
+    netRoom.Free;
+  end;
+end;
+
+
 // Manda para a sala a configuracao da reserva: mapa, opcoes e lista de
 // jogadores, montada aqui e nao pelo host.
 //
 // LIMITE HONESTO: o cliente oficial so aplica mkPlayersList/mkGameOptions/
-// mkMapSelect quando e joiner (ver TKMNetworking.HandleMessage) -- o host os
-// ignora. Quem prende o host sao as outras duas metades: o lobby travado no
-// cliente, e a recusa de repassar qualquer pacote dele que divirja da reserva
-// (RankedRelayAllowed). Um host adulterado pode manter uma tela divergente,
-// mas nao consegue fazer a sala inteira jogar por ela nem dar mkStart.
+// mkMapSelect/mkStart quando e joiner (ver TKMNetworking.HandleMessage) -- quem
+// entrou primeiro virou host e ignora os quatro. Enquanto o cliente nao tratar
+// esses pacotes como palavra do servidor, esta imposicao so chega de fato em
+// quem nao e host.
 procedure TKMNetServer.RankedImpose(aRoom: Integer);
 var
   ranked: TKMRankedRoom;
-  netRoom: TKMNetRoom;
   options: TKMGameOptions;
   M: TKMemoryStream;
-  I, hostSlot: Integer;
 begin
   ranked := fRankedRooms.ByRoom(aRoom);
   if ranked = nil then Exit;
@@ -864,25 +931,18 @@ begin
   // cliente. Esperamos a sala fechar.
   if not ranked.EveryoneHere then Exit;
 
-  netRoom := TKMNetRoom.Create;
+  // A semente e do servidor porque quem inicia a partida e ele. Sorteada uma
+  // vez por reserva e mantida: reimpor com semente nova depois de alguem ja ter
+  // recebido a anterior seria dois mundos diferentes na mesma partida.
+  //
+  // Zero nao serve -- TKMGameOptions.Reset diz que e valor invalido para o
+  // KaMSeed. Vem do relogio, e nao de Random, porque o servidor dedicado nunca
+  // chama Randomize: a sequencia se repetiria identica a cada restart.
+  if ranked.Seed = 0 then
+    ranked.Seed := Max(1, Integer(TimeGet and $7FFFFFFF));
+
   options := TKMGameOptions.Create;
   try
-    netRoom.HostDoesSetup := True; // ninguem escolhe local nem time: a reserva escolheu
-    netRoom.RandomizeTeamLocations := False;
-    netRoom.SpectatorsAllowed := False;
-
-    hostSlot := 1;
-    for I := 1 to ranked.Count do
-    begin
-      netRoom.AddPlayer(ranked.Slots[I].Nickname, ranked.Slots[I].Handle, '');
-      netRoom[netRoom.Count].Team := ranked.Slots[I].Team;
-      netRoom[netRoom.Count].StartLocation := ranked.Slots[I].Loc;
-      netRoom[netRoom.Count].ReadyToStart := True;
-      netRoom[netRoom.Count].HasMapOrSave := True;
-      if ranked.Slots[I].Handle = fRoomInfo[aRoom].HostHandle then
-        hostSlot := netRoom.Count;
-    end;
-
     options.Peacetime := ranked.Peacetime;
     options.SpeedPT := ranked.Speed;
     options.SpeedAfterPT := ranked.Speed;
@@ -903,23 +963,91 @@ begin
     options.Save(M);
     PacketSendToRoom(mkGameOptions, aRoom, M);
     M.Free;
-
-    M := TKMemoryStreamBinary.Create;
-    M.Write(hostSlot);
-    netRoom.SaveToStream(M);
-    PacketSendToRoom(mkPlayersList, aRoom, M);
-    M.Free;
-
-    ranked.Imposed := True;
-    Status('Ranked: configuracao imposta na ' + ranked.Describe);
   finally
     options.Free;
-    netRoom.Free;
   end;
+
+  RankedSendList(ranked, mkPlayersList);
+
+  ranked.Imposed := True;
+  Status('Ranked: configuracao imposta na ' + ranked.Describe);
 end;
 
 
-// Confere uma lista de jogadores (mkPlayersList ou mkStart) contra a reserva.
+// O servidor inicia a partida.
+//
+// Numa sala reservada nao existe host de verdade: ninguem tem botao de comecar.
+// O gatilho e "todos presentes e todos prontos", e o pacote sai daqui.
+procedure TKMNetServer.RankedStart(aRanked: TKMRankedRoom);
+begin
+  // Marcado antes de enviar: RankedSendList entrega pela fila e um segundo
+  // mkReadyToStart no meio do caminho mandaria a sala comecar duas vezes.
+  aRanked.StartSent := True;
+
+  Status(Format('Ranked: sala %d, todos prontos -- servidor iniciando match %s',
+                [aRanked.Room, string(aRanked.MatchId)]));
+
+  RankedSendList(aRanked, mkStart);
+end;
+
+
+// Pacotes que o cliente endereca ao host mas que, numa sala reservada, quem
+// responde e o servidor. True = consumido aqui, nao repassar.
+//
+// Deixar qualquer um dos dois chegar ao host seria o host mexer na propria
+// lista e anuncia-la; esse anuncio e justamente o pacote que RankedRelayAllowed
+// recusa, e a recusa reimpoe. Era essa a briga em laco que travava o lobby.
+function TKMNetServer.RankedHostPacketTaken(aHandle: TKMNetHandleIndex; aRoom: Integer;
+                                            aPacket: PByte; aLength: Word): Boolean;
+var
+  ranked: TKMRankedRoom;
+  kind: TKMNetMessageKind;
+  slot: Integer;
+begin
+  Result := False;
+
+  // Caminho comum de um servidor sem ranqueada: sai antes de tocar em qualquer
+  // estrutura.
+  if (aLength = 0) or (fRankedRooms.Count = 0) then Exit;
+
+  kind := TKMNetMessageKind(aPacket^);
+  if not (kind in [mkReadyToStart, mkHasMapOrSave]) then Exit;
+
+  ranked := fRankedRooms.ByRoom(aRoom);
+  if ranked = nil then Exit;
+
+  // Sala reservada: os dois morrem aqui de qualquer jeito, mesmo quando nao ha
+  // nada a fazer com eles.
+  Result := True;
+
+  // mkHasMapOrSave nao tem o que decidir: o mapa da temporada vai na release e
+  // a lista imposta ja diz que todo mundo tem o arquivo.
+  if kind = mkHasMapOrSave then Exit;
+
+  // Partida iniciando ou rodando: um pronto atrasado nao pode remontar a lista
+  // debaixo de uma simulacao lockstep.
+  if ranked.Live or ranked.StartSent then Exit;
+
+  slot := ranked.SlotOfHandle(aHandle);
+  if slot = -1 then Exit;
+
+  ranked.Slots[slot].Ready := not ranked.Slots[slot].Ready;
+  if ranked.Slots[slot].Ready then
+    Status(Format('Ranked: sala %d, %s deu pronto', [aRoom, string(ranked.Slots[slot].Nickname)]))
+  else
+    Status(Format('Ranked: sala %d, %s tirou o pronto', [aRoom, string(ranked.Slots[slot].Nickname)]));
+
+  // Sem reenviar a lista o clique nao aparece para ninguem -- nem para quem
+  // clicou, ja que a tela dele e a lista que o servidor manda. So a lista: o
+  // mkMapSelect faria cada cliente recarregar o mapa do disco a cada clique.
+  RankedSendList(ranked, mkPlayersList);
+
+  if ranked.EveryoneHere and ranked.AllReady then
+    RankedStart(ranked);
+end;
+
+
+// Confere um mkPlayersList contra a reserva.
 function TKMNetServer.RankedListMatches(aRanked: TKMRankedRoom; aNetRoom: TKMNetRoom): Boolean;
 var
   I, slot: Integer;
@@ -1017,7 +1145,13 @@ begin
             options := TKMGameOptions.Create;
             try
               options.Load(M);
-              ranked.Seed := options.RandomSeed;
+              // A semente e sorteada pelo servidor (ver RankedImpose). Cliente
+              // que anuncia outra esta escolhendo o mundo em que se joga --
+              // e, pior, deixaria metade da sala com um sorteio e metade com o
+              // outro.
+              if options.RandomSeed <> ranked.Seed then
+                reason := 'semente divergente da reserva'
+              else
               if options.Peacetime <> ranked.Peacetime then
                 reason := Format('peacetime %d, reserva pede %d', [options.Peacetime, ranked.Peacetime])
               else
@@ -1032,7 +1166,14 @@ begin
             end;
           end;
 
-        mkPlayersList, mkStart:
+        // Quem inicia partida ranqueada e o servidor, quando todos deram pronto
+        // (ver RankedStart). Nao ha caso legitimo de mkStart vindo de cliente:
+        // ou e cliente velho, que ainda acha que e host, ou e adulterado
+        // tentando comecar com gente faltando.
+        mkStart:
+          reason := 'so o servidor inicia partida ranqueada';
+
+        mkPlayersList:
           begin
             netRoom := TKMNetRoom.Create;
             try
@@ -1043,12 +1184,6 @@ begin
             finally
               netRoom.Free;
             end;
-
-            // mkStart so passa com a sala cheia. Comecar com gente faltando e a
-            // forma mais barata de manipular uma ranqueada.
-            if (reason = '') and (kind = mkStart) and not ranked.EveryoneHere then
-              reason := Format('inicio com %d de %d jogadores presentes',
-                               [ranked.ConnectedCount, ranked.Count]);
           end;
       end;
     except
@@ -1154,6 +1289,11 @@ begin
   // Max(1, ...) porque AwaySince = 0 e o nosso "esta presente". TimeGet pode
   // valer 0 no primeiro milissegundo de uptime da maquina.
   ranked.Slots[slot].AwaySince := Max(1, TimeGet);
+  // Quem caiu perde o pronto e precisa confirmar de novo ao voltar. Preservar
+  // seria a partida comecar no milissegundo em que o socket dele reconecta --
+  // com ele ainda carregando o jogo, ou nem na frente do computador. O pronto
+  // e uma declaracao de "estou aqui agora", e ele acabou de deixar de estar.
+  ranked.Slots[slot].Ready := False;
   Status(Format('Ranked: %s caiu da sala %d, %d segundos para voltar',
                 [string(ranked.Slots[slot].Nickname), aRoom, RANKED_ABANDON_TIMEOUT div 1000]));
 end;
@@ -2062,7 +2202,13 @@ begin
                 end
                 else
                 if senderRoom <> -1 then
-                  SendDataQueue(fRoomInfo[senderRoom].HostHandle, @senderClient.fBuffer[0], packetLength+6);
+                begin
+                  // kam_brasil: numa sala reservada, parte do que seria decisao
+                  // do host (o pronto de cada jogador) e decisao do servidor.
+                  // Esses pacotes param aqui em vez de chegar ao host.
+                  if not RankedHostPacketTaken(aHandle, senderRoom, @senderClient.fBuffer[6], packetLength) then
+                    SendDataQueue(fRoomInfo[senderRoom].HostHandle, @senderClient.fBuffer[0], packetLength+6);
+                end;
         NET_ADDRESS_SERVER:
                 RecieveMessage(packetSender, @senderClient.fBuffer[6], packetLength);
         else    SendDataQueue(packetRecipient, @senderClient.fBuffer[0], packetLength+6);

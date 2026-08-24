@@ -63,6 +63,42 @@ function KamBrasilMatch: TKMKamBrasilMatch;
 // que uma volta ao menu nao tente entrar de novo.
 procedure KamBrasilMatchUsada;
 
+
+// ---------------------------------------------------------------------------
+// SINAL "ESTOU NUMA SALA RANQUEADA"
+// ---------------------------------------------------------------------------
+// Numa sala ranqueada quem monta a partida e o servidor dedicado: ele manda
+// mkMapSelect / mkGameOptions / mkPlayersList com a configuracao da reserva.
+// O cliente oficial so aplicava esses tres sendo JOINER, entao quem entrasse
+// primeiro virava host, ignorava a imposicao e anunciava o proprio estado. O
+// servidor recusava e reimpunha, para sempre -- a briga em laco do teste ao
+// vivo. Este sinal existe para o host tambem obedecer.
+//
+// LIGA: KamBrasilEntrouNaRanqueada, chamado no auto-join
+//   (TKMMenuMultiplayer.MP_KamBrasilAutoJoin), logo antes de conectar. E o
+//   unico ponto do jogo que sabe que a sala veio da fila.
+//
+// DESLIGA: KamBrasilSaiuDaRanqueada, chamado em TKMNetworking.Disconnect.
+//   Disconnect e o funil por onde se sai de QUALQUER sala -- voltar do lobby,
+//   ser kickado, falhar a conexao/senha, e o fim da partida (gGameApp.StopGame
+//   desconecta antes de voltar ao menu). Amarrar o desligamento a ele e de
+//   proposito: enquanto ha conexao a sala e a mesma, e sem conexao nao existe
+//   ranqueada. Ficar preso em True faria o proximo jogo casual do jogador abrir
+//   com o lobby travado e o host obedecendo pacote que ninguem mandou.
+//   (AttemptReconnection chama Join, nao Disconnect, entao reconectar no meio
+//   de uma ranqueada mantem o sinal ligado -- que e o certo.)
+//
+// ISTO NAO E SEGURANCA, E COOPERACAO. Um cliente adulterado simplesmente nao
+// chama KamBrasilEntrouNaRanqueada e volta a se comportar como host comum.
+// Quem GARANTE a configuracao e o servidor dedicado, que se recusa a repassar
+// mkMapSelect/mkGameOptions/mkPlayersList/mkStart divergentes da reserva (ver
+// TKMNetServer.RankedRelayAllowed) e reimpoe a configuracao correta. O sinal
+// daqui so serve para o cliente honesto obedecer sem brigar, e para o jogador
+// nao clicar num controle cujo efeito o servidor ja vai descartar.
+function KamBrasilEmRanqueada: Boolean;
+procedure KamBrasilEntrouNaRanqueada;
+procedure KamBrasilSaiuDaRanqueada;
+
 implementation
 uses
   SysUtils, Classes;
@@ -73,6 +109,7 @@ const
 var
   gMatch: TKMKamBrasilMatch;
   gLoaded: Boolean;
+  gEmRanqueada: Boolean;
 
 
 function KamBrasilMatch: TKMKamBrasilMatch;
@@ -133,8 +170,27 @@ begin
 end;
 
 
+function KamBrasilEmRanqueada: Boolean;
+begin
+  Result := gEmRanqueada;
+end;
+
+
+procedure KamBrasilEntrouNaRanqueada;
+begin
+  gEmRanqueada := True;
+end;
+
+
+procedure KamBrasilSaiuDaRanqueada;
+begin
+  gEmRanqueada := False;
+end;
+
+
 initialization
   gLoaded := False;
   gMatch.Disponivel := False;
+  gEmRanqueada := False;
 
 end.

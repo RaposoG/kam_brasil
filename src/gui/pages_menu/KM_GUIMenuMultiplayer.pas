@@ -1048,6 +1048,21 @@ begin
     porta := StrToIntDef(Trim(Edit_MP_FindPort.Text), 56789);
 
   MP_Join(match.Servidor, porta, match.Sala);
+
+  // kam_brasil: liga o sinal de ranqueada. Dali em diante o cliente OBEDECE a
+  // configuracao que o servidor dedicado impuser (mapa, opcoes e lista de
+  // jogadores) mesmo acabando como host da sala, e o lobby abre com os
+  // controles de setup travados.
+  //
+  // Depois do MP_Join e condicionado ao estado, nao antes: MP_Join desiste sem
+  // conectar quando o nickname e invalido, e um sinal ligado sem sala nenhuma
+  // travaria o proximo lobby comum do jogador. Join() poe lgsConnecting, entao
+  // sair de lgsNone significa que a conexao comecou de fato.
+  //
+  // Quem desliga e TKMNetworking.Disconnect -- o funil de toda saida: voltar do
+  // lobby, kick, timeout, senha recusada e fim de partida.
+  if gNetworking.NetGameState <> lgsNone then
+    KamBrasilEntrouNaRanqueada;
 end;
 
 

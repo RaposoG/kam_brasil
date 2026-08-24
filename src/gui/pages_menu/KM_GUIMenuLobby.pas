@@ -125,6 +125,9 @@ type
 
     function DetectMapType: Integer;
     procedure SettingsClick(Sender: TObject);
+    // kam_brasil: em ranqueada o host nao tem botao de COMECAR -- tem botao
+    // de PRONTO, como todo mundo. Quem inicia a partida e o servidor.
+    function HostControlsStart: Boolean;
     procedure StartClick(Sender: TObject);
     procedure BackClick(Sender: TObject);
     procedure EscKeyDown(Sender: TObject);
@@ -136,6 +139,8 @@ type
 
     procedure ResetDropColorRandom(aI: Integer);
     procedure UpdateDropColor_BlockColSel(I: Integer);
+
+    procedure SetRankedSetupLock(aLocked: Boolean); // kam_brasil
   protected
     Panel_Lobby: TKMPanel;
       Panel_Settings: TKMPanel;
@@ -221,6 +226,7 @@ uses
   KM_RenderUI,
   KM_Resource, KM_ResFonts, KM_ResLocales, KM_ResSound, KM_ResTypes,
   KM_Networking, KM_NetRoom,
+  KM_KamBrasilMatch, // kam_brasil: sinal de sala ranqueada (KamBrasilEmRanqueada)
   KM_MapTypes, KM_MapUtilsExt,
   KM_GameAppSettings,
   KM_ServerSettings;
@@ -925,7 +931,13 @@ begin
   gNetworking.OnSetPassword := Lobby_OnSetPassword;
   gNetworking.OnAbortAllTransfers := Lobby_AbortAllTransfers;
 
-  Radio_MapType.ItemIndex := gGameSettings.MenuLobbyMapType;
+  // kam_brasil: em ranqueada o mapa vem da reserva, entao a preferencia salva do
+  // jogador nao vale -- se ela fosse "RMG", UpdateMapList abriria o popup do
+  // gerador de mapas por cima do lobby.
+  if KamBrasilEmRanqueada then
+    Radio_MapType.ItemIndex := 0
+  else
+    Radio_MapType.ItemIndex := gGameSettings.MenuLobbyMapType;
   UpdateMapList(aKind = lpkHost);
 
   //Hide RMG settings PopUp in case it was shown previosly
@@ -1057,11 +1069,80 @@ begin
 end;
 
 
+// kam_brasil: numa sala ranqueada quem monta a partida e o servidor dedicado.
+// Trava os controles de setup para TODO MUNDO -- inclusive o host, que numa
+// sala comum e justamente quem manda neles.
+//
+// Sem isto o host clica, o servidor recusa o pacote divergente e reimpoe, e o
+// jogador ve a tela voltar sozinha achando que o jogo travou: e exatamente a
+// experiencia ruim do teste ao vivo.
+//
+// Usa CanChangeEnable e nao um simples Disable porque o lobby RECALCULA o
+// Enabled desses controles o tempo todo -- Lobby_OnPlayersSetup,
+// UpdateGameOptionsUI, UpdateDescNOptionsUI, Lobby_OnMapMissing e UpdateMapList
+// tem dezenas de linhas `Enabled := gNetworking.IsHost and ...`. Com
+// CanChangeEnable = False cada uma delas vira no-op (ver TKMControl.SetEnabled)
+// e nao precisamos cacar todas uma a uma.
+//
+// Chamado no topo de Reset, que roda toda vez que o lobby abre ou troca de
+// papel (Show, Lobby_OnReassignedToHost/Joiner). Fora de ranqueada roda com
+// aLocked = False e apenas devolve CanChangeEnable, deixando o lobby comum
+// identico ao de sempre -- os controles sao criados uma vez e reaproveitados
+// entre partidas, entao destravar aqui e obrigatorio.
+//
+// NAO E SEGURANCA, E COOPERACAO: um cliente adulterado nao passa por aqui. Quem
+// garante a configuracao e o servidor (TKMNetServer.RankedRelayAllowed), que
+// recusa repassar mkMapSelect/mkGameOptions/mkPlayersList/mkStart divergentes
+// da reserva. Esta trava so evita que o jogador clique no que nao vale.
+procedure TKMMenuLobby.SetRankedSetupLock(aLocked: Boolean);
+var
+  I: Integer;
+
+  procedure Apply(aCtrl: TKMControl);
+  begin
+    aCtrl.CanChangeEnable := True; // destrava antes, senao nem Disable pega
+    if aLocked then
+    begin
+      aCtrl.Disable;
+      aCtrl.CanChangeEnable := False;
+    end;
+  end;
+
+begin
+  //Mapa e opcoes da partida
+  Apply(Radio_MapType);
+  Apply(DropCol_Maps);
+  Apply(DropBox_Difficulty);
+  Apply(TrackBar_LobbyPeacetime);
+  Apply(TrackBar_SpeedPT);
+  Apply(TrackBar_SpeedAfterPT);
+  Apply(CheckBox_HostControl);
+  Apply(CheckBox_RandomizeTeamLocations);
+  Apply(CheckBox_Spectators);
+
+  //Descricao e senha da sala: o servidor recusa mkSetPassword em sala reservada
+  Apply(Button_ChangeSettings);
+
+  //Local, time, cor e abertura/fechamento de vaga
+  for I := 1 to MAX_LOBBY_SLOTS do
+  begin
+    Apply(DropBox_PlayerSlot[I]);
+    Apply(DropBox_Loc[I]);
+    Apply(DropBox_Team[I]);
+    Apply(DropBox_Colors[I]);
+  end;
+end;
+
+
 //Reset everything to it's defaults depending on users role (Host/Joiner/Reassigned)
 procedure TKMMenuLobby.Reset(aKind: TKMNetPlayerKind; aPreserveMaps: Boolean = False);
 var
   I: Integer;
 begin
+  // kam_brasil: antes de qualquer Enable/Disable abaixo -- destravado, o Reset
+  // segue como sempre; travado, tudo que ele tentar habilitar vira no-op.
+  SetRankedSetupLock(KamBrasilEmRanqueada);
+
   Label_ServerName.Caption := '';
   Image_PasswordLock.Hide;
 
@@ -1144,6 +1225,18 @@ begin
     CheckBox_Spectators.Disable;
     Button_ChangeSettings.Hide;
   end;
+
+  // kam_brasil: em ranqueada o host tambem tem botao de PRONTO, nao de COMECAR.
+  // Vem depois do ramo host/joiner de proposito: sobrescreve o que o ramo do
+  // host acabou de por (COMECAR, desabilitado). Sem isto o botao dele fica
+  // desabilitado para sempre -- CanStart exige AllReady, e a lista imposta
+  // nasce com todo mundo NAO pronto. Os dois ficariam olhando a tela.
+  if KamBrasilEmRanqueada then
+  begin
+    Button_Start.Caption := gResTexts[TX_LOBBY_READY];
+    Button_Start.Enable;
+  end;
+
   UpdateSpectatorDivide;
 end;
 
@@ -1296,7 +1389,10 @@ begin
 
   if not CanShowPlayerMenu(Sender) then Exit;
 
-  if gNetworking.IsHost then
+  // kam_brasil: em ranqueada o host nao expulsa, nao bane e nao passa o host
+  // adiante -- a sala e a reserva, nao dele. Cai no menu de joiner, que tem so
+  // o mudo, util e inofensivo.
+  if gNetworking.IsHost and not KamBrasilEmRanqueada then
   begin
     //Remember which player it is by his server index
     //since order of players can change. If someone above leaves we still have the proper Id
@@ -1881,7 +1977,7 @@ begin
                                         and (    (gNetworking.SelectGameKind <> ngkMap)
                                            or not gNetworking.MapInfo.TxtInfo.BlockColorSelection
                                            or curSlot.IsSpectator);
-      if myNik and not gNetworking.IsHost then
+      if myNik and not HostControlsStart then
       begin
         if curSlot.ReadyToStart then
           Button_Start.Caption := gResTexts[TX_LOBBY_NOT_READY]
@@ -1983,7 +2079,7 @@ begin
   CheckBox_HostControl.Checked := gNetworking.Room.HostDoesSetup;
   CheckBox_RandomizeTeamLocations.Checked := gNetworking.Room.RandomizeTeamLocations;
   CheckBox_Spectators.Checked := gNetworking.Room.SpectatorsAllowed;
-  if gNetworking.IsHost then
+  if HostControlsStart then
   begin
     Button_Start.Enabled := IsGameStartAllowed(gNetworking.CanStart);
     if gNetworking.CanStart in [gsmNoStartWithWarn, gsmStartWithWarn] then
@@ -2085,7 +2181,10 @@ end;
 
 procedure TKMMenuLobby.SelectRMGMap(); //RMG
 begin
-  if not gNetworking.IsHost then
+  // kam_brasil: em ranqueada o mapa e o da reserva -- ninguem gera um RMG por
+  // cima. Guarda aqui, na funcao por onde passam todos os caminhos que geram
+  // (RefreshMapList e UpdateMapList), e nao em cada chamador.
+  if not gNetworking.IsHost or KamBrasilEmRanqueada then
     Exit; //Only host can select RMG map
 
   fMapsMP.Lock;
@@ -2118,8 +2217,11 @@ var
 begin
   slotIndex := gNetworking.MySlotIndex;
 
-  canEdit := ((gNetworking.IsHost or not gNetworking.Room.HostDoesSetup) and
-              (gNetworking.IsHost or not gNetworking.Room[slotIndex].ReadyToStart));
+  // kam_brasil: clicar no minimapa troca o proprio local sem passar por
+  // DropBox_Loc, entao a trava de SetRankedSetupLock nao alcanca este caminho.
+  canEdit := not KamBrasilEmRanqueada
+             and ((gNetworking.IsHost or not gNetworking.Room.HostDoesSetup) and
+                  (gNetworking.IsHost or not gNetworking.Room[slotIndex].ReadyToStart));
 
   if canEdit then
   begin
@@ -2662,7 +2764,14 @@ begin
                   fMinimap.LoadFromMission(M.FullPath('.dat'), M.HumanUsableLocs);
                   fMinimap.Update(not M.TxtInfo.BlockFullMapPreview);
 
-                  if not TrackBar_LobbyPeacetime.Enabled and gNetworking.IsHost then
+                  // kam_brasil: `and not KamBrasilEmRanqueada` e obrigatorio.
+                  // Numa ranqueada o trackbar fica SEMPRE desabilitado (ver
+                  // SetRankedSetupLock), entao sem esta guarda o host zeraria o
+                  // peacetime e anunciaria isso a cada mkMapSelect. O servidor
+                  // recusaria ("peacetime 0, reserva pede 15") e reimporia --
+                  // reconstruindo exatamente a briga em laco que viemos matar.
+                  if not TrackBar_LobbyPeacetime.Enabled and gNetworking.IsHost
+                    and not KamBrasilEmRanqueada then
                   begin
                     TrackBar_LobbyPeacetime.Position := 0; //No peacetime in coop (trackbar gets disabled above)
                     GameOptionsChange(nil); //Send it to other clients
@@ -2704,7 +2813,10 @@ begin
     Radio_MapType.ItemIndex := 0;
   Panel_SetupMinimap.Hide;
   Panel_SetupTransfer.Show;
-  Button_SetupDownload.Show;
+  // kam_brasil: ninguem baixa de si mesmo. O host pode cair aqui numa ranqueada
+  // (ele agora aplica o mapa imposto pelo servidor); mostrar o botao so daria a
+  // barra parada em 0kb, ja que TKMNetworking.RequestFileTransfer o ignora.
+  Button_SetupDownload.Visible := not gNetworking.IsHost;
   Lobby_OnFileTransferProgress(0, 0); //Reset progress bar
   if aStartTransfer then
     FileDownloadClick(nil);
@@ -2909,11 +3021,20 @@ begin
 end;
 
 
+// kam_brasil: quem manda comecar. Fora da ranqueada e o host, como sempre.
+// Na ranqueada nao e ninguem: o servidor origina o mkStart quando todos os
+// pareados derem pronto, e ate o host obedece.
+function TKMMenuLobby.HostControlsStart: Boolean;
+begin
+  Result := gNetworking.IsHost and not KamBrasilEmRanqueada;
+end;
+
+
 procedure TKMMenuLobby.StartClick(Sender: TObject);
 var
   loadError, version, path: UnicodeString;
 begin
-  if gNetworking.IsHost then
+  if HostControlsStart then
   begin
     if gNetworking.IsSave then
     begin

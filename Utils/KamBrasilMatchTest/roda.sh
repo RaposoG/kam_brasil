@@ -34,7 +34,8 @@ caso() { # nome, conteudo do arquivo, linhas esperadas na saida
 
 caso "completo" 'servidor=203.0.113.10\nporta=56789\nsala=3\nsenha=segredo\n' \
   'disponivel=TRUE' 'servidor=203.0.113.10' 'porta=56789' 'sala=3' 'senha=[segredo]' \
-  'arquivo_sumiu=TRUE' 'apos_usada=FALSE'
+  'arquivo_sumiu=TRUE' 'apos_usada=FALSE' \
+  'ranq_inicial=FALSE' 'ranq_ligado=TRUE' 'ranq_desligado=FALSE'
 
 caso "sem porta e sem senha" 'servidor=kam.exemplo.com\nsala=0\n' \
   'disponivel=TRUE' 'porta=0' 'sala=0' 'senha=[]'

@@ -81,6 +81,7 @@ type
     procedure HandleMessageReassignHost(aSenderIndex: TKMNetHandleIndex; aStream: TKMemoryStream);
     procedure HandleMessagePlayerDisconnected(aSenderIndex: TKMNetHandleIndex; aLastSentCommandsTick: Integer);
     procedure HandleMessagePlayersList(aStream: TKMemoryStream);
+    function ObeyRoomSetup: Boolean;
     procedure ReturnToLobbyVoteSucceeded;
     procedure ResetReturnToLobbyVote;
     procedure TransferOnCompleted(aClientIndex: TKMNetHandleIndex);
@@ -245,7 +246,8 @@ uses
   Math, StrUtils,
   KM_NetConsts, KM_Sound, KM_Log, KM_CommonUtils, KM_HandsCollection, KM_Hand,
   KM_System, KM_GameApp, KM_GameSettings,
-  KM_Resource, KM_ResSound, KM_ResTexts, KM_NetworkUtils;
+  KM_Resource, KM_ResSound, KM_ResTexts, KM_NetworkUtils,
+  KM_KamBrasilMatch; // kam_brasil: sinal de sala ranqueada (KamBrasilEmRanqueada)
 
 
 { TKMNetworking }
@@ -404,6 +406,11 @@ end;
 
 procedure TKMNetworking.Disconnect;
 begin
+  // kam_brasil: sair da sala apaga o sinal de ranqueada. Este e o funil de
+  // TODA saida (voltar do lobby, kick, falha de conexao, fim de partida), entao
+  // o sinal nao pode ficar preso ligado e contaminar o proximo jogo casual.
+  KamBrasilSaiuDaRanqueada;
+
   fIgnorePings := 0;
   fReconnectRequested := 0; //Cancel any reconnection that was requested
   fEnteringPassword := False;
@@ -1105,6 +1112,13 @@ end;
 
 procedure TKMNetworking.RequestFileTransfer;
 begin
+  // kam_brasil: em ranqueada o host tambem aplica o mapa que o servidor impos,
+  // entao pode chegar aqui sem ter o arquivo. mkFileRequest vai para
+  // NET_ADDRESS_HOST, que nesse caso somos nos mesmos -- pedir o arquivo a si
+  // proprio so produziria o download parado em 0kb. Mapa faltando numa
+  // ranqueada e problema de instalacao: os mapas da temporada vao na release.
+  if IsHost then Exit;
+
   if fFileReceiver = nil then
     case fMissingBundleType of
       ngkMap:   begin
@@ -1376,13 +1390,35 @@ begin
 end;
 
 
+// kam_brasil: devemos OBEDECER a configuracao que chegou pela rede (mapa,
+// opcoes e lista de jogadores) em vez de sermos nos a ditar?
+//
+// Joiner sempre obedece -- e o comportamento original do KaM Remake, intocado.
+// Numa sala ranqueada o HOST tambem obedece: quem monta a partida ali e o
+// servidor dedicado, que manda os mesmos tres pacotes com a configuracao da
+// reserva. Sem isto o host ignorava a imposicao e anunciava o proprio estado, o
+// servidor recusava e reimpunha, e a sala travava nesse laco.
+//
+// NAO E SEGURANCA, E COOPERACAO: um cliente adulterado simplesmente nao liga o
+// sinal e volta a ignorar. Quem garante e o servidor, que se recusa a repassar
+// mkMapSelect/mkGameOptions/mkPlayersList/mkStart divergentes da reserva
+// (TKMNetServer.RankedRelayAllowed).
+//
+// Fora de ranqueada KamBrasilEmRanqueada e False e nada muda: jogo aberto sem
+// launcher se comporta exatamente como antes.
+function TKMNetworking.ObeyRoomSetup: Boolean;
+begin
+  Result := (fNetPlayerKind = lpkJoiner) or KamBrasilEmRanqueada;
+end;
+
+
 // Handle mkPLayerList message
 procedure TKMNetworking.HandleMessagePlayersList(aStream: TKMemoryStream);
 var
   oldLoc: Integer;
   isPlayerInitBefore: Boolean;
 begin
-  if fNetPlayerKind = lpkJoiner then
+  if ObeyRoomSetup then
   begin
     oldLoc := -1234; // some randor value, make compiler happy
     isPlayerInitBefore := MySlotIndex > 0;
@@ -1998,7 +2034,7 @@ begin
             HandleMessagePlayersList(aStream);
 
     mkGameOptions:
-            if fNetPlayerKind = lpkJoiner then
+            if ObeyRoomSetup then // kam_brasil: em ranqueada o host tambem aplica
             begin
               fNetGameOptions.Load(aStream);
               if Assigned(OnGameOptions) then OnGameOptions;
@@ -2014,7 +2050,7 @@ begin
             end;
 
     mkMapSelect:
-            if fNetPlayerKind = lpkJoiner then
+            if ObeyRoomSetup then // kam_brasil: em ranqueada o host tambem aplica
             begin
               FreeAndNil(fFileReceiver); //Any ongoing transfer is cancelled
               aStream.ReadW(tmpStringW); //Map name
@@ -2163,7 +2199,11 @@ begin
             end;
 
     mkStart:
-            if fNetPlayerKind = lpkJoiner then
+            // kam_brasil: ObeyRoomSetup e nao lpkJoiner -- em sala ranqueada
+            // quem inicia e o servidor, e o host tem que obedecer igual. Sem
+            // isto o servidor manda comecar, os joiners entram e o host fica
+            // parado no lobby: partida com um jogador a menos, em silencio.
+            if ObeyRoomSetup then
             begin
               aStream.Read(fHostSlotIndex);
               fNetRoom.LoadFromStream(aStream);

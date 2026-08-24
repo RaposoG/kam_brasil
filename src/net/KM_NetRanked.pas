@@ -40,6 +40,11 @@ type
     AwaySince: Cardinal;         // TimeGet da queda; 0 = presente (ou nunca chegou)
     Outcome: TWonOrLost;
     Abandoned: Boolean;
+    // O "pronto" que o jogador clicou. Mora aqui, e nao na lista que o servidor
+    // monta, porque a lista e descartavel: ela e remontada do zero a cada
+    // imposicao, e sem uma copia por slot a imposicao seguinte apagaria o
+    // clique que o jogador acabou de dar.
+    Ready: Boolean;
   end;
 
   // Uma sala reservada. Metade reserva (o que a API mandou), metade estado vivo
@@ -56,6 +61,7 @@ type
     Slots: array [1 .. MAX_LOBBY_SLOTS] of TKMRankedSlot;
 
     Live: Boolean;               // a partida saiu do lobby e esta rodando
+    StartSent: Boolean;          // o servidor ja mandou o mkStart para a sala
     Started: Boolean;            // /started ja foi enviado
     Reported: Boolean;           // /report ja foi enviado
     Imposed: Boolean;            // a configuracao canonica ja foi empurrada para a sala
@@ -71,6 +77,7 @@ type
     function SlotOfHandle(aHandle: TKMNetHandleIndex): Integer;
     function ConnectedCount: Integer;
     function EveryoneHere: Boolean;
+    function AllReady: Boolean;
     function ResultsComplete: Boolean;
     function TimedOutSlot: Integer;
     function WinnerTeam: string;
@@ -255,6 +262,23 @@ end;
 function TKMRankedRoom.EveryoneHere: Boolean;
 begin
   Result := (Count > 0) and (ConnectedCount = Count);
+end;
+
+
+// Todo mundo clicou em pronto.
+//
+// Nao confere presenca de proposito: quem chama junta com EveryoneHere. Sao
+// duas perguntas diferentes -- "todos deram pronto" e "todos ainda estao aqui"
+// -- e o slot de quem caiu volta com Ready False (ver RankedClientGone), entao
+// misturar as duas aqui so esconderia qual delas falhou no log.
+function TKMRankedRoom.AllReady: Boolean;
+var
+  I: Integer;
+begin
+  Result := Count > 0;
+  for I := 1 to Count do
+    if not Slots[I].Ready then
+      Exit(False);
 end;
 
 
@@ -507,6 +531,7 @@ begin
         aRoom.Slots[aRoom.Count].AwaySince := 0;
         aRoom.Slots[aRoom.Count].Outcome := wolNone;
         aRoom.Slots[aRoom.Count].Abandoned := False;
+        aRoom.Slots[aRoom.Count].Ready := False;
       end;
     end;
   finally
