@@ -44,8 +44,16 @@ bugreport.txt
 /SpriteResource/trees.rx
 /SpriteResource/units.rx
 /data/Sprites
-/data/defines/houses.dat
-/data/defines/unit.dat
+# kam_brasil: houses.dat e unit.dat SAO versionados aqui, ao contrario do upstream.
+#
+# Eles definem as regras de casas e unidades, e entram no calculo determinístico
+# da simulacao. Vindo da copia original de cada jogador, edicoes diferentes do KaM
+# davam regras diferentes, e as partidas desincronizavam no meio -- foi o que
+# aconteceu no tick 17733 com tres jogadores.
+#
+# Os arquivos aqui sao os do KaM Remake, que rebalanceou as tabelas: sao
+# diferentes dos de 1998. Todo jogador precisa dos MESMOS, entao eles vao na
+# release em vez de sair da maquina de cada um.
 /data/gfx/video 
 /data/gfx/*.bbm
 /data/gfx/*.lbm
