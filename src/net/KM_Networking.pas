@@ -1271,16 +1271,30 @@ begin
     else
     begin
       aStream.ReadA(strPlayerName);
-      intErrorText := fNetRoom.CheckCanJoin(strPlayerName, aServerIndex);
-      if (intErrorText = -1) and (fNetGameState <> lgsLobby) then
-        intErrorText := TX_NET_GAME_IN_PROGRESS;
+
+      // kam_brasil: em sala ranqueada quem decide quem entra e o SERVIDOR, que
+      // ja recusou quem nao esta na reserva. A lista do host foi imposta por ele
+      // e ja traz o nome de quem esta chegando -- rodar CheckCanJoin aqui
+      // recusa o jogador pelo proprio nome ("mesmo nome ja entrou na sala") e
+      // deixa a sala impossivel de completar.
+      if ObeyRoomSetup then
+        intErrorText := -1
+      else
+      begin
+        intErrorText := fNetRoom.CheckCanJoin(strPlayerName, aServerIndex);
+        if (intErrorText = -1) and (fNetGameState <> lgsLobby) then
+          intErrorText := TX_NET_GAME_IN_PROGRESS;
+      end;
     end;
 
     if intErrorText = -1 then
     begin
       // Password was checked by server already
 
-      fNetRoom.AddPlayer(strPlayerName, aServerIndex, '');
+      // kam_brasil: nao duplicar quem a lista imposta ja traz. O handle certo
+      // vem na proxima imposicao, que o servidor dispara ao fim do join.
+      if not (ObeyRoomSetup and (fNetRoom.NicknameToLocal(strPlayerName) <> -1)) then
+        fNetRoom.AddPlayer(strPlayerName, aServerIndex, '');
       PacketSend(aServerIndex, mkAllowToJoin);
       PacketSendA(aServerIndex, mkSetPassword, fPassword); //Send joiner password, just to tell him
       SendMapOrSave(aServerIndex); //Send the map first so it doesn't override starting locs
