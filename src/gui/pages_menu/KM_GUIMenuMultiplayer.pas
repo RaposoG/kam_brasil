@@ -21,6 +21,10 @@ type
     fSelectedServerInfo: TKMServerInfo;
     fLobbyBusy: Boolean;
 
+    // kam_brasil: entrada automatica na sala que o launcher reservou
+    fAutoJoin: Boolean;
+    fAutoJoinSenha: AnsiString;
+
     procedure MP_Init;
     procedure MP_SaveSettings;
     procedure MP_UpdateStatus(const aStatus: string; aColor: TColor4; aBusy: Boolean);
@@ -44,6 +48,7 @@ type
     procedure MP_JoinSuccess;
     procedure MP_JoinFail(const aData: UnicodeString);
     procedure MP_JoinAssignedHost;
+    procedure MP_KamBrasilAutoJoin;
     procedure MP_HostClick(Sender: TObject);
     procedure MP_HostFail(const aData: UnicodeString);
     procedure BackClick(Sender: TObject);
@@ -120,6 +125,7 @@ uses
   KM_ControlsTypes,
   KM_ServerSettings,
   KM_Networking, KM_NetTypes,
+  KM_KamBrasilMatch, // kam_brasil: sala reservada entregue pelo launcher
   KM_ResTexts, KM_ResLocales, KM_ResFonts, KM_ResSound, KM_ResTypes,
   KM_Sound,
   KM_RenderUI,
@@ -944,6 +950,20 @@ end;
 
 procedure TKMMenuMultiplayer.MP_JoinPassword;
 begin
+  // kam_brasil: no auto-join a senha ja veio na reserva. Abrir o popup pediria
+  // ao jogador uma senha que ele nunca viu.
+  //
+  // Uma vez so: senha recusada faz o servidor reenviar mkReqPassword (ver
+  // mkPassword em KM_NetServer), e responder sempre a mesma coisa seria laco
+  // infinito. Zerando fAutoJoin aqui, a segunda pergunta cai no popup de sempre
+  // e o jogador resolve na mao.
+  if fAutoJoin then
+  begin
+    fAutoJoin := False;
+    gNetworking.SendPassword(fAutoJoinSenha);
+    Exit;
+  end;
+
   Panel_MPFindServer.Hide;
   Edit_MP_Password.Text := '';
   Panel_MPPassword.Show;
@@ -957,6 +977,8 @@ begin
   gNetworking.OnJoinFail := nil;
   gNetworking.OnJoinAssignedHost := nil;
 
+  fAutoJoin := False; // kam_brasil: entramos; senha guardada nao serve para mais nada
+
   StartLobby(False);
 end;
 
@@ -964,6 +986,9 @@ end;
 procedure TKMMenuMultiplayer.MP_JoinFail(const aData: UnicodeString);
 begin
   gNetworking.Disconnect;
+  // kam_brasil: fim do auto-join. Nao ha retentativa: o erro fica no status e a
+  // pagina volta a ser a de sempre, com "Procurar servidor" para entrar na mao.
+  fAutoJoin := False;
   MP_UpdateStatus(Format(gResTexts[TX_GAME_ERROR_CONNECTION_FAILED], [aData]), icYellow, False);
   gSoundPlayer.Play(sfxnError);
 end;
@@ -976,8 +1001,53 @@ begin
   gNetworking.OnJoinAssignedHost := nil;
   gNetworking.OnHostFail := MP_HostFail;
 
+  // kam_brasil: virar host aqui NAO e motivo para recusar a sala, e por isso o
+  // auto-join nao trata este caso de forma especial.
+  //
+  // O servidor dedicado nao joga: em qualquer sala, reservada ou nao, quem
+  // entra primeiro vira host ("Let the first client be a Host", em
+  // KM_NetServer.AddClientToRoom). Numa 1x1 um dos dois sempre vai ser -- se
+  // desconectassemos ao receber host, os dois lados sairiam esperando o outro
+  // entrar antes e a partida nunca comecaria.
+  //
+  // E host de sala reservada nao manda na sala: RankedImpose escreve mapa,
+  // opcoes e lista de jogadores, e RankedRelayAllowed recusa repassar qualquer
+  // pacote do host que divirja da reserva. Entao seguimos para o lobby como
+  // host, igual ao fluxo normal.
+  fAutoJoin := False;
+
   // We were joining a game and the server assigned hosting rights to us
   StartLobby(True); // Open lobby page in host mode
+end;
+
+
+// kam_brasil: entra sozinho na sala que o launcher reservou.
+//
+// Chamado no fim de Show, com a pagina ja montada: MP_Join le
+// Edit_MP_PlayerName (preenchido por MP_Init) e mexe no status da tela.
+// A lista de servidores nao entra nisso -- a reserva traz endereco e sala, e
+// conectamos direto, sem esperar o master server responder.
+procedure TKMMenuMultiplayer.MP_KamBrasilAutoJoin;
+var
+  match: TKMKamBrasilMatch;
+  porta: Word;
+begin
+  match := KamBrasilMatch;
+  if not match.Disponivel then Exit; // jogo aberto sem launcher: menu de sempre
+
+  // Consumida antes de tentar, nao depois: uma tentativa e so. Se falhar,
+  // MP_JoinFail mostra o erro e voltar ao menu nao dispara tudo de novo.
+  KamBrasilMatchUsada;
+
+  fAutoJoin := True;
+  fAutoJoinSenha := match.Senha;
+
+  // Reserva sem porta usa a padrao do jogo, que MP_Init acabou de por na tela.
+  porta := match.Porta;
+  if porta = 0 then
+    porta := StrToIntDef(Trim(Edit_MP_FindPort.Text), 56789);
+
+  MP_Join(match.Servidor, porta, match.Sala);
 end;
 
 
@@ -1031,6 +1101,8 @@ begin
   UpdateGameTimeLabel;
 
   Panel_MultiPlayer.Show;
+
+  MP_KamBrasilAutoJoin;
 end;
 
 

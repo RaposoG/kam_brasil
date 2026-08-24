@@ -467,6 +467,7 @@ procedure TKMMainMenuInterface.UpdateState(aGlobalTickCount: Cardinal);
 begin
   inherited;
 
+  fMenuMain.UpdateState; // kam_brasil: auto-join da partida reservada
   fMenuLobby.UpdateState;
   fMenuMapEditor.UpdateState;
   fMenuLoad.UpdateState;

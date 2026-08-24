@@ -7,7 +7,7 @@
         <MainSource>KaM_Remake.dpr</MainSource>
         <Platform Condition="'$(Platform)'==''">Win32</Platform>
         <ProjectGuid>{CB64F5E8-91AE-4497-A8C4-89668924F870}</ProjectGuid>
-        <ProjectVersion>19.5</ProjectVersion>
+        <ProjectVersion>20.1</ProjectVersion>
         <TargetedPlatforms>3</TargetedPlatforms>
         <ProjectName Condition="'$(ProjectName)'==''">KaM_Remake</ProjectName>
     </PropertyGroup>
@@ -459,6 +459,7 @@
         <DCCReference Include="src\net\KM_NetAuthSecure.pas"/>
         <DCCReference Include="src\net\KM_NetClient.pas"/>
         <DCCReference Include="src\net\KM_KamBrasilAuth.pas"/>
+        <DCCReference Include="src\net\KM_KamBrasilMatch.pas"/>
         <DCCReference Include="src\net\KM_NetClientOverbyte.pas"/>
         <DCCReference Include="src\net\KM_NetClientLNet.pas"/>
         <DCCReference Include="src\net\KM_NetConsts.pas"/>

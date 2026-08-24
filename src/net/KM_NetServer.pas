@@ -85,6 +85,10 @@ type
     fJoinDeferred: Boolean;
     fJoinRoom: Integer;
     fJoinGameRev: TKMGameRevision;
+    // TimeGet de quando o join ficou preso esperando as reservas ranqueadas.
+    // 0 = nunca esperou. Serve para segurar o pedido UMA vez: a segunda passada
+    // pela guarda ja e a decisao final.
+    fRankedWaitSince: Cardinal;
   public
     constructor Create(aHandle: TKMNetHandleIndex; aRoom: Integer);
     procedure AddQueuedPacket(aData: Pointer; aLength: Cardinal);
@@ -98,6 +102,7 @@ type
     property JoinDeferred: Boolean read fJoinDeferred write fJoinDeferred;
     property JoinRoom: Integer read fJoinRoom write fJoinRoom;
     property JoinGameRev: TKMGameRevision read fJoinGameRev write fJoinGameRev;
+    property RankedWaitSince: Cardinal read fRankedWaitSince write fRankedWaitSince;
   end;
 
 
@@ -740,6 +745,7 @@ procedure TKMNetServer.RankedRoomsReceived(const aText: string);
 var
   changes: string;
   I: Integer;
+  client: TKMServerClient;
 begin
   if not fListening then Exit; // a resposta pode chegar depois do StopListening
 
@@ -756,6 +762,23 @@ begin
 
   for I := 0 to fRankedRooms.Count - 1 do
     RankedBindRoom(fRankedRooms.Item(I));
+
+  // Quem bateu na porta antes da reserva chegar ficou segurado na guarda do
+  // AddClientToRoom. Agora a lista esta na mao: da para deixar entrar ou
+  // recusar de verdade.
+  //
+  // De tras para frente porque AddClientToRoom pode expulsar, e expulsar mexe
+  // na lista. AuthPending de fora: aquele JoinDeferred e do outro dono, quem o
+  // atende e o AuthCompleted -- roubar o pedido dele perderia o join.
+  for I := fClientList.Count - 1 downto 0 do
+  begin
+    client := fClientList[I];
+    if client.JoinDeferred and not client.AuthPending and (client.Room = -1) then
+    begin
+      client.JoinDeferred := False;
+      AddClientToRoom(client.Handle, client.JoinRoom, client.JoinGameRev);
+    end;
+  end;
 end;
 
 
@@ -1334,6 +1357,12 @@ var
   ranked: TKMRankedRoom;
   client: TKMServerClient;
 begin
+  // kam_brasil: nil explicito. `ranked` so recebe valor dentro da guarda de
+  // ranqueada, e e lido no fim da rotina para decidir o RankedImpose -- num
+  // servidor casual aquele ramo nunca roda. O FPC deixa passar; o Delphi
+  // recusa com E1036, e esta certo: sem isto o teste final leria lixo de pilha.
+  ranked := nil;
+
   if fClientList.GetByHandle(aHandle).Room <> -1 then exit; //Changing rooms is not allowed yet
 
   if aRoom = fRoomCount then
@@ -1374,22 +1403,54 @@ begin
       Exit;
     end;
 
-  // kam_brasil: numa sala reservada so entra quem esta na reserva.
+  // kam_brasil: num servidor de ranqueada, so entra quem a fila pareou -- e so
+  // na sala reservada para ele.
+  //
+  // A guarda e por SERVIDOR, nao por sala. Antes ela testava `ranked <> nil`,
+  // ou seja, so protegia sala COM reserva ativa: com a fila vazia nenhuma sala
+  // estava reservada e o servidor de ranqueada aceitava qualquer um, como um
+  // servidor comum. Sala sem reserva nao e "sala livre" aqui, e sala em que
+  // ninguem tem o que fazer.
+  //
+  // Num servidor CASUAL nada disto roda: RankedEnabled e False (fRankedUrl
+  // vazio), o polling nunca acontece e ninguem e barrado.
   //
   // A identidade usada e a do AuthNickname -- o nome que a nossa API confirmou
   // para o token, nao o que o cliente diz chamar-se. Fica antes da atribuicao
   // de host de proposito: um estranho recusado nao pode virar dono da sala no
   // caminho para a porta.
-  ranked := fRankedRooms.ByRoom(aRoom);
-  if ranked <> nil then
+  if RankedEnabled then
   begin
     client := fClientList.GetByHandle(aHandle);
+    ranked := fRankedRooms.ByRoom(aRoom);
+
     rankedSlot := -1;
-    if client <> nil then
+    if (ranked <> nil) and (client <> nil) then
       rankedSlot := ranked.SlotOfNickname(client.AuthNickname);
 
     if rankedSlot = -1 then
     begin
+      // A reserva pode estar a caminho: o launcher manda entrar na sala no
+      // mesmo instante em que a API a reserva, e o nosso polling pode estar a
+      // RANKED_POLL_INTERVAL do proximo. Segura o pedido UMA vez, pede a lista
+      // agora e decide quando ela chegar -- recusar de cara derrubaria
+      // justamente o par legitimo que chegou rapido demais.
+      //
+      // ponytail: se o GET /rooms falhar, ninguem retoma este join e o cliente
+      // cai no JOIN_TIMEOUT dele (8s, "tempo esgotado") em vez de ouvir "voce
+      // nao esta nesta partida". E o caso de API fora do ar, em que nao haveria
+      // reserva nenhuma para entrar. Se isso incomodar, varra os JoinDeferred
+      // vencidos no RankedUpdate.
+      if (client <> nil) and (client.RankedWaitSince = 0) then
+      begin
+        client.RankedWaitSince := TimeGet;
+        client.JoinDeferred := True;
+        client.JoinRoom := aRoom; // ja resolvido: nao recria sala na segunda volta
+        client.JoinGameRev := aGameRevision;
+        fRankedLastPoll := 0; // busca as reservas no proximo tick, sem esperar
+        Exit;
+      end;
+
       Status('Client ' + IntToStr(aHandle) + ' is not on the reservation for room ' + IntToStr(aRoom));
       PacketSend(aHandle, mkRefuseToJoin, TX_KB_NOT_IN_MATCH, True);
       fServer.Kick(aHandle);

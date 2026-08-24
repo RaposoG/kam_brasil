@@ -287,6 +287,7 @@ uses
   {$ENDIF}
   KM_NetClient in 'src\net\KM_NetClient.pas',
   KM_KamBrasilAuth in 'src\net\KM_KamBrasilAuth.pas',
+  KM_KamBrasilMatch in 'src\net\KM_KamBrasilMatch.pas',
   {$IFDEF WDC} KM_NetClientOverbyte in 'src\net\KM_NetClientOverbyte.pas', {$ENDIF}
   {$IFDEF FPC} KM_NetClientLNet in 'src\net\KM_NetClientLNet.pas', {$ENDIF}
   KM_NetConsts in 'src\net\KM_NetConsts.pas',

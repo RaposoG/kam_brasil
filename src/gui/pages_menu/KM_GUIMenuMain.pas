@@ -11,6 +11,7 @@ type
   TKMMenuMain = class(TKMMenuPageCommon)
   private
     fOnPageChange: TKMMenuChangeEventText;
+    fAutoJoinTentado: Boolean; // kam_brasil
     procedure ButtonClick(Sender: TObject);
   protected
     Panel_MainMenu: TKMPanel;
@@ -25,6 +26,7 @@ type
   public
     constructor Create(aParent: TKMPanel; aOnPageChange: TKMMenuChangeEventText);
     procedure Show;
+    procedure UpdateState;
   end;
 
 
@@ -32,6 +34,7 @@ implementation
 uses
   KM_Main,
   KM_GameApp,
+  KM_KamBrasilMatch, // kam_brasil: sala reservada entregue pelo launcher
   KM_ResTexts, KM_ResFonts, KM_ResTypes,
   KM_RenderUI;
 
@@ -113,6 +116,29 @@ end;
 procedure TKMMenuMain.Show;
 begin
   Panel_MainMenu.Show;
+end;
+
+
+// kam_brasil: com partida reservada pelo launcher, o jogo vai sozinho para o
+// multijogador -- de la KM_GUIMenuMultiplayer entra na sala.
+//
+// Daqui e nao de dentro de Show: Show roda no meio de PageChange, e trocar de
+// pagina ali deixaria fMenuPage apontando para a pagina errada (o PageChange de
+// fora ainda faz o seu `fMenuPage := fMenuMain` depois de nos).
+//
+// Passa por ButtonClick, e nao direto por fOnPageChange, para nao duplicar o
+// mutex de instancia unica e a checagem dos .dat que o botao ja faz.
+//
+// Uma vez so: se o multijogador estiver barrado (outra instancia aberta, dat
+// alterado) ButtonClick manda para a tela de erro, e insistir a cada volta ao
+// menu prenderia o jogador nela.
+procedure TKMMenuMain.UpdateState;
+begin
+  if fAutoJoinTentado or not Panel_MainMenu.Visible then Exit;
+
+  fAutoJoinTentado := True;
+  if KamBrasilMatch.Disponivel then
+    ButtonClick(Button_MM_MultiPlayer);
 end;
 
 
