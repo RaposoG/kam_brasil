@@ -945,7 +945,7 @@ begin
   try
     options.Peacetime := ranked.Peacetime;
     options.SpeedPT := ranked.Speed;
-    options.SpeedAfterPT := ranked.Speed;
+    options.SpeedAfterPT := ranked.SpeedAfterPT;
     options.RandomSeed := ranked.Seed;
 
     // Ordem igual a do host (mapa, opcoes, lista): o cliente recalcula cores e
@@ -1159,7 +1159,7 @@ begin
               // ("spd=1.2") e o cliente manda um literal Single. Exigir os bits
               // iguais travaria a sala para sempre por causa de um ULP.
               if (Abs(options.SpeedPT - ranked.Speed) > 0.01)
-              or (Abs(options.SpeedAfterPT - ranked.Speed) > 0.01) then
+              or (Abs(options.SpeedAfterPT - ranked.SpeedAfterPT) > 0.01) then
                 reason := 'velocidade divergente da reserva';
             finally
               options.Free;

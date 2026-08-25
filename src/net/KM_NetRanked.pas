@@ -56,7 +56,8 @@ type
     MapCRC: Cardinal;
     MapName: UnicodeString;      // vazio quando a reserva nao trouxe o nome do arquivo
     Peacetime: Word;
-    Speed: Single;
+    Speed: Single;         // durante a paz
+    SpeedAfterPT: Single;  // depois que a paz acaba
     Count: Integer;
     Slots: array [1 .. MAX_LOBBY_SLOTS] of TKMRankedSlot;
 
@@ -476,6 +477,9 @@ begin
   aRoom.MapName := '';
   aRoom.Peacetime := 0;
   aRoom.Speed := 1;
+  // Sem `spda` na reserva, a velocidade depois da paz e a mesma de antes -- que
+  // e o comportamento de uma API que ainda nao manda o campo novo.
+  aRoom.SpeedAfterPT := 1;
   aRoom.Count := 0;
 
   fields := TStringList.Create;
@@ -507,6 +511,9 @@ begin
       else
       if key = 'spd' then
         aRoom.Speed := StrToFloatDot(value, 1)
+      else
+      if key = 'spda' then
+        aRoom.SpeedAfterPT := StrToFloatDot(value, 1)
       else
       if key = 'p' then
       begin
@@ -602,6 +609,7 @@ begin
       existing.MapName := fresh.MapName;
       existing.Peacetime := fresh.Peacetime;
       existing.Speed := fresh.Speed;
+      existing.SpeedAfterPT := fresh.SpeedAfterPT;
       existing.Count := fresh.Count;
       for K := 1 to fresh.Count do
         existing.Slots[K] := fresh.Slots[K];
